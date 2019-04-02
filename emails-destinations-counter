@@ -1,0 +1,138 @@
+#!/bin/bash
+
+#####################
+# CONFIGURATION:
+servers="filter1 filter2 filter3 filter4 ofilter1 ofilter2"
+notify_when_results="yes" # show a notification to the user in terminal (that depends of the terminal type, but is somewhat a standard)
+#####################
+
+
+usage(){
+    cat <<EOF
+Usage: $(basename $0)  min_count_duplicates
+ * min_count_duplicates: the amount of counted matches minimum to be considered to print
+Example: $(basename $0) 5
+
+Description:
+This tool fetches all emails from all the servers listed in the conf entry, parsing them one to one collecting the emails from To/Cc/Bcc: entries excluding the duplicates found on the same file and appending them to a total list of emails and domains. finally counts every case and prints results that has more than an X amount of domains or emails in the spool, if nothing is print, everything is fine!
+
+It also features checks, timeouts, notification of user when results are found, etc..
+
+Extra:
+For debug purposes you can put emails files in a "emails-demo" directory and they will be used instead of fetching them from the servers
+EOF
+
+
+    exit 1
+}
+
+main(){
+    # pre {{{
+    local file results entry line entries
+
+    if [[ -e "/usr/lib/elive-tools/functions" ]] ; then
+        source /usr/lib/elive-tools/functions
+    else
+        if [[ -e "./elive-functions" ]] ; then
+            source "./elive-functions"
+        else
+            echo -e "E: You must have elive functions available to use this tool, a copy of the '/usr/lib/elive-tools/functions' file in the same place of this tool called 'elive-functions'. Aborting..."
+            exit 1
+        fi
+    fi
+    export NOREPORTS=1
+
+    # }}}
+    # conf {{{
+    min_count_duplicates="$1" # use it a first parameter of the command
+
+    # checks
+    if [[ -z "$min_count_duplicates" ]] ; then
+        usage
+    fi
+
+    # check dependencies
+    if ! el_dependencies_check "sed,awk,head,sort,uniq,timeout" ; then
+        exit 1
+    fi
+
+    # - conf }}}
+
+    # fetch emails {{{
+    if [[ -d "emails-demo" ]] ; then
+        el_warning "Note: Using 'emails-demo' directory instead of fetching from servers"
+
+        entries="$( head -n 200 "emails-demo/"* | tr -d '\r' | grep -aiE "^(to|cc|bcc):" | grep -viE "(to|cc|bcc): <>" | sed -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^to:||gI' -e 's|^cc:||gI' -e 's|^bcc:||gI' -e 's|^ ||' )"
+    else
+        for server in $servers
+        do
+            el_debug "fetching $server"
+            entries="${entries}$( timeout 40 ssh "$server" head -q -n 200 /etc/haraka/queue/* | tr -d '\r' | grep -aiE "^(to|cc|bcc):" | grep -viE "(to|cc|bcc): <>" | sed -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^to:||gI' -e 's|^cc:||gI' -e 's|^bcc:||gI' -e 's|^ ||' )"
+        done
+    fi
+
+    # - fetch emails }}}
+    # parse emails one by one
+    results="$(
+        # get every To: header from them
+        while read -ru 3 line
+        do
+            [[ -n "$line" ]] ||  continue
+            unset emails
+
+            # get only the emails, even multiple ones but without duplicates (for each email file), from the To: entry
+            # example of wrong ones:
+            while read -ru 3 entry
+            do
+                [[ -n "$entry" ]] ||  continue
+
+                # downcase entries
+                entry="${entry,,}"
+
+                el_array_member_add "$entry" "${emails[@]}" ; emails=("${_out[@]}")
+                el_array_member_add "${entry#*@}" "${domains[@]}" ; domains=("${_out[@]}")
+
+            done 3<<< "$( echo "$line" | tr ' ' '\n' | grep -E -o "\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b" )"
+
+            if [[ -n "${emails[@]}" ]] ; then
+                echo "${emails[@]}" | tr ' ' '\n'
+            fi
+
+        done 3<<< "$( echo "$entries" )"
+    )"
+
+
+    #
+    # Show results
+    #
+
+    # emails
+    results_counted="$( echo "$results" | tr ' ' '\n' | sort | uniq -c | sort -k1n | awk -v "x=${min_count_duplicates}" '$1 > x' )"
+    if [[ -n "$results_counted" ]] ; then
+        el_info "Emails queued in spool"
+        echo "$results_counted"
+        is_results_shown=1
+    fi
+
+    # domains
+    results_counted="$( echo "$results" | sed -e 's|^.*@||g' | tr ' ' '\n' | sort | uniq -c | sort -k1n | awk -v "x=${min_count_duplicates}" '$1 > x' )"
+
+    if [[ -n "$results_counted" ]] ; then
+        el_info "Domains queued in spool"
+        echo "$results_counted"
+        is_results_shown=1
+    fi
+
+    # notify the user with a terminal bell signal
+    if ((is_results_shown)) && [[ "$notify_when_results" = "yes" ]] ; then
+        echo -ne "\a"
+    fi
+
+}
+
+#
+#  MAIN
+#
+main "$@"
+
+# vim: set foldmethod=marker :

@@ -1,0 +1,2832 @@
+#!/bin/bash
+
+# gettext functions
+if [[ -x "/usr/bin/gettext.sh" ]] ; then
+    . gettext.sh
+else
+    # make it compatible
+    eval_gettext(){
+        echo "$@"
+    }
+fi
+
+if [[ -n "$ZSH_VERSION" ]] ; then
+    # Note: seems like if you put a ? just after a char, cannot be sourced correctly from zsh
+    setopt nonomatch
+    alias shopt=':'
+    alias _expand=_bash_expand
+    alias _complete=_bash_comp
+    #emulate -L sh
+    #setopt kshglob noshglob braceexpand
+
+    # we cannot set parameters on this variable, so use it without icon:
+    [[ -z "$guitool" ]] && guitool="/usr/bin/zenity"
+else
+    [[ -z "$guitool" ]] && guitool="/usr/bin/zenity --window-icon=/usr/share/icons/gnome/256x256/apps/logo-elive.png"
+fi
+
+# do we are in a terminal ? avoid interactive-in-terminal if not
+if [[ -n "$TERM" ]] ; then
+    if [[ "$TERM" = *rxvt* ]] || [[ "$TERM" = *xterm* ]] || [[ "$TERM" = "terminology" ]] || [[ "$TERM" = *gnome* ]] || [[ "$TERM" = *screen* ]] || [[ "$TERM" = *tmux* ]] ; then
+        is_terminal=1
+        is_console=0
+    fi
+    # note: TTY variable not shows in bash login aparently
+    if [[ "$TERM" = "linux" ]] ; then
+        # note: if you want to enable colors in an application run from E (.desktop file), you must set the TERM variable, and LS_COLORS too
+        if [[ -n "$E_START" ]] ; then
+            # launched from e17 itself
+            is_terminal=0
+            is_console=0
+        else
+            # note: do not disable is_terminal, pure console is meant to be a terminal too and all the code depends monstly of the is_terminal one
+            is_terminal=1
+            is_console=1
+        fi
+    fi
+else
+    is_terminal=0
+    is_console=0
+    # if we don't have TERM we need this value to not trigger 'tput' errors like when running apt commands
+    export TERM="linux"
+fi
+
+
+# TODO: LS_COLORS is not a reliable way to know that we are on a terminal, we should rely on is_terminal then
+if [[ -n "$NOCOLOR" ]] || ! ((is_terminal)) ; then
+    el_c_n=""
+    el_c_r=""
+    el_c_r2=""
+    el_c_g=""
+    el_c_g2=""
+    el_c_y=""
+    el_c_y2=""
+    el_c_m=""
+    el_c_m2=""
+    el_c_c=""
+    el_c_c2=""
+    el_c_b=""
+    el_c_b2=""
+    el_c_gr=""
+    el_c_gr2=""
+
+    el_c_blink=""
+    el_c_underline=""
+    el_c_italic=""
+    el_c_bold=""
+else
+    el_c_n="\033[0;39m" # Normal color  (orig: normal)
+    el_c_r="\033[1;31m" # Red color  (orig: red)
+    el_c_r2="\033[0;31m" # Red2 color  (orig: red)
+    el_c_g="\033[1;32m" # Green color  (orig: green)
+    el_c_g2="\033[0;32m" # Green2 color  (orig. green2)
+    el_c_y="\033[1;33m" # Yellow color  (orig. yellow)
+    el_c_y2="\033[0;33m" # Yellow2 color  (orig. yellow)
+    el_c_m="\033[1;35m" # Magenta color
+    el_c_m2="\033[0;35m" # Magenta2 color
+    el_c_c="\033[1;36m" # Cyan color
+    el_c_c2="\033[0;36m" # Cyan2 color
+    el_c_b="\033[1;34m" # Blue color
+    el_c_b2="\033[0;34m" # Blue2 color
+
+    el_c_gr="\033[1;30m" # Gray color
+    el_c_gr2="\033[0;30m" # Gray2 color
+    if ((is_console)) ; then
+        ## gray's are not visible in console when vga=normal (t460s doesnt configure the good one so it fallbacks to normal), use cyan's instead
+        el_c_gr="\033[1;36m" # Gray color
+        #el_c_gr2="\033[0;36m" # Gray2 color
+    fi
+    #else
+        #el_c_gr="\033[1;30m" # Gray color
+        #el_c_gr2="\033[0;30m" # Gray2 color
+    #fi
+
+    el_c_blink="\033[5m" # Blink 'color' effect  (orig. blink)
+    el_c_underline="\033[4m" # Underline 'color' effect  (orig. underline)
+    el_c_italic="\033[3m" # Italic 'color' effect
+    el_c_bold="\033[1m" # Bold 'color' effect
+fi
+
+# Elive debug verbosity:
+# - 0 : only show errors
+# - 1 : + warnings
+# - 2 : + info messages (user always should want to see information messages, so this should be the default one)
+# - 3 : + debug
+# - 4 : + very debug
+# - 5 : + very very debug
+#if grep -qs thanatest /proc/cmdline ; then
+    #EL_DEBUG=${EL_DEBUG:-"3"}
+#else
+    EL_DEBUG=${EL_DEBUG:-"2"}
+#fi
+
+# extra vars
+source /etc/adduser.conf
+[[ -z "$DHOME" ]] && export DHOME=/home
+# set the user's home, sometimes, like if we are in an init script, the home points to /
+if [[ -z "$HOME" ]] || [[ "$HOME" = "/" ]] ; then
+    if [[ "$UID" = "0" ]] ; then
+        export HOME="/root"
+    else
+        export HOME="$DHOME/$(id -un)"
+    fi
+fi
+
+# use LC_ALL=C like this instead:  LC_ALL="$EL_LC_EN":
+if grep -qs "^en_US.UTF-8\s*" "/etc/locale.gen" ; then
+    EL_LC_EN="en_US.UTF-8"
+else
+    # warning: this can broke things by not being utf8
+    EL_LC_EN="C"
+fi
+
+# Note: if you use ZSH, you must set the SOURCE var name from the main script
+if [[ -z "$SOURCE" ]]; then
+    if [[ -n "$ZSH_VERSION" ]] ; then
+        # TODO: actually stills showing the name of this function file, not works
+        SOURCE="${(%):-%x}"
+    else
+        SOURCE="$( readlink -f "$0" || true )"
+fi
+
+fi
+#-------------------------------------------------------------------------------
+#   Set the DISPLAY variable
+#-------------------------------------------------------------------------------
+el_set_display_variables(){ # Set DISPLAY variables of our actual user
+    # from enlightenment values {{{
+    local display e_ipc_socket
+
+    # unset XAUTHORITY if is not from our user (bugs when we "su otheruser")
+    # update: we should never unset the XAUTHORITY, verify that this was really wrong before..
+    # more exactly: if we run a script from user, that sudo another script that runs a zenity, we will unset the XAUTHORITY and we will never be able to show the zenity message
+    #if [[ -n "$XAUTHORITY" ]] && [[ "$XAUTHORITY" != "$HOME/"* ]] ; then
+        #unset XAUTHORITY
+    #fi
+
+    # if we are in console (out of X) we should always exit
+    if ((is_console)) ; then
+        return
+    fi
+
+    if [[ -z "${DISPLAY}" ]] || [[ -z "${E_IPC_SOCKET}" ]] ; then
+        if command ls --color=none /tmp/e-${USER}@*/*-* 1>/dev/null 2>/dev/null ; then
+            display="$( command find /tmp/e-${USER}@*/*-* -mindepth 0 -maxdepth 0 -type s -print0 | xargs -r0 stat -c %y\ %n 2>/dev/null | sort -n | tail -1 2>/dev/null )"
+
+            # cleanups
+            display="/tmp/${display##* /tmp/}"
+            display="${display%|*}"
+
+            if [[ -z "$display" ]] ; then
+                el_warning "unable to get display values from running enlightenment session"
+            fi
+
+            e_ipc_socket="${display}"
+
+            #display="${display##*disp-}"
+            display="$( basename ${display} )"
+            display="${display%-*}"
+
+            if [[ -z "${DISPLAY}" ]] ; then
+                DISPLAY="${display}"
+                export DISPLAY
+            fi
+
+            if [[ -z "${E_IPC_SOCKET}" ]] ; then
+                E_IPC_SOCKET="${e_ipc_socket}"
+                export E_IPC_SOCKET
+            fi
+        fi
+
+    fi
+    # END from enlightenment values }}}
+    # xauthority {{{
+    if [[ -z "$XAUTHORITY" ]] && [[ -e "$HOME/.Xauthority" ]] ; then
+        XAUTHORITY="$HOME/.Xauthority"
+        export XAUTHORITY
+    fi
+
+    if ((is_terminal)) && [[ "$UID" != 0 ]] ; then
+        # only show the error if we have a graphical system running by the user
+        if command ls --color=none /tmp/e-${USER}@*/*-* 1>/dev/null 2>/dev/null ; then
+            if [[ -z "${DISPLAY}" ]] ; then
+                el_explain 1 "Variable DISPLAY is not set, so we will not have access to the local graphical system"
+            fi
+            if [[ -z "${XAUTHORITY}" ]] ; then
+                el_explain 1 "Variable XAUTHORITY is not set, so we may not have full access to the local graphical system"
+            fi
+            if [[ -z "${E_IPC_SOCKET}" ]] ; then
+                if [[ "$UID" != 0 ]] ; then
+                    el_explain 3 "Variable E_IPC_SOCKET is not set, we may be not the user owner of this graphical session"
+                fi
+            fi
+        fi
+    fi
+
+    # END xauthority }}}
+}
+#-------------------------------------------------------------------------------
+#   Send a notification to the user
+#-------------------------------------------------------------------------------
+el_notify_user(){ # notify the user (desktop || email). "title" "text"
+
+    el_set_display_variables
+
+    if [[ "${DISPLAY}" = ":0.0" ]] ; then
+        if el_dependencies_check notify-send ; then
+            command notify-send -t 30000 "$@"
+        else
+            el_warning "notify-send not installed"
+        fi
+    fi
+
+    if ((is_terminal)) ; then
+        el_info "$@"
+    fi
+}
+#-------------------------------------------------------------------------------
+#   Send an important notification to the user
+#-------------------------------------------------------------------------------
+el_notify_user_important(){ # notify the user (desktop || email). "title" "text" (no timeout mode)
+
+    el_set_display_variables
+
+    if [[ "${DISPLAY}" = ":0.0" ]] ; then
+        if el_dependencies_check notify-send ; then
+            command notify-send -t 240000 "$@"
+        else
+            el_warning "notify-send not installed"
+        fi
+    else
+        el_warning "$@"
+    fi
+
+}
+
+#-------------------------------------------------------------------------------
+#   Verify if we have internet connection with a fast ping check
+#-------------------------------------------------------------------------------
+el_verify_internet_ping(){ # verify if we have internet connection using a ping (true or false, return value)
+    # pre {{{
+    local timeout count target
+    timeout="$1"
+    # note: this code contains commented lines used for debug (to simulate a full lag)
+
+    # note: dns resolving can be very slow if we are for example using torrents
+    #target="www.google.com"
+    target="8.8.8.8"
+
+    if [[ -z "$timeout" ]] ; then
+        # default timeout if not set
+        timeout=7
+    fi
+
+    # - pre }}}
+    # do we have booted the computer recently? (and so no internet yet)
+    # live boot time (geolocation)
+    if [[ "$( cat "/proc/uptime" | awk '{print $1}' | sed -e 's|\..*$||g' )" -lt 60 ]] ; then
+        # we just booted the system, wait for real 5 secons
+        for i in $( seq 5 )
+        do
+            sleep 1
+            #if timeout 2 sleep 100000 2>/dev/null 1>&2 ; then
+            if timeout 2 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+                return 0
+            fi
+        done
+    fi
+    if [[ "$( cat "/proc/uptime" | awk '{print $1}' | sed -e 's|\..*$||g' )" -lt 300 ]] ; then
+    #if true ; then
+        # wait up to 11-30 seconds (lag vs without lag
+        # note: the sleeps are needed because the ping will inmediately fail, and we need to wait some seconds on this case
+        # note: and we need this ugly structure because it can lead to a much higher limit time
+        if timeout 2 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            return 0
+        fi
+        LC_ALL=C sleep 2
+        #if timeout 2 sleep 100000 2>/dev/null 1>&2 ; then
+        if timeout 3 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            return 0
+        fi
+        LC_ALL=C sleep 2
+        #if timeout 2 sleep 100000 2>/dev/null 1>&2 ; then
+        if timeout 3 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            return 0
+        fi
+        LC_ALL=C sleep 3
+        #if timeout 3 sleep 100000 2>/dev/null 1>&2 ; then
+        if timeout 3 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            return 0
+        fi
+        LC_ALL=C sleep 4
+        #if timeout 4 sleep 100000 2>/dev/null 1>&2 ; then
+        if timeout 4 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            return 0
+        fi
+    fi
+
+    # do we are using servcies that slows down our dns resolving? just make sure and test it..
+    #if ps aux | grep -v grep | grep -qsiE "(transmission|torrent|deluge|amule|nicotine)" ; then
+        ## special ping modes in case we have a lag (because we don't want to lose time resolving dns)
+        #target="8.8.8.8"
+        ##if timeout 3 sleep 100000 2>/dev/null 1>&2 ; then
+        #if timeout 4 ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            #return 0
+        #fi
+    #else
+        ## this is the normal ping mode
+        ##if timeout $timeout sleep 100000 2>/dev/null 1>&2 ; then
+        #if timeout $timeout ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+            #return 0
+        #fi
+    #fi
+
+    # normal ping mode, we don't need to use the previous code with 8.8.8.8 so we use it by default
+    # we only need to know if we can ping to outside, not dns resolving
+    if timeout $timeout ping -c 1 "$target"  2>/dev/null 1>&2 ; then
+        return 0
+    fi
+
+
+    # wanna debug more?
+    if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+        el_debug "doing a ping to google don't respond: $( timeout 1 ping -c 1 "$target" 2>&1 )"
+        if timeout 1 ping -c 1 8.8.8.8 2>/dev/null 1>&2 ; then
+            el_debug "by other side we can ping directly to an ip, check your /etc/resolv.conf"
+        else
+            el_debug "we cannot even ping to the google dns (8.8.8.8)"
+        fi
+    fi
+
+    # in any case if we reach here, is because we cannot ping to google, so return that
+    return 1
+}
+#-------------------------------------------------------------------------------
+#   Verify if we have internet connection (return value)
+#-------------------------------------------------------------------------------
+el_verify_internet(){ # verify if we have internet connection (true or false, return value)
+    # pre {{{
+    local stamp_hour_prev date_hour_now date_hour_prev returned OnLine i mode timeout buf
+
+    stamp_hour_prev="/tmp/.stamps-${USER}/verify_internet_connection"
+    mkdir -p "$( dirname "${stamp_hour_prev}" )"
+
+    date_hour_now="$( date +%s )"
+    #date_hour_prev="$( tail -1 "${stamp_hour_prev}" 2>/dev/null )"
+    #read -r date_hour_prev <<< "$date_hour_prev"
+
+    # note: we should not use delayed, we always want delayed, instead, we should use "fast" when we need a fast check
+    mode="$1"
+
+    if [[ "${mode}" = "fast" ]] ; then
+        # bad network in house dont show anything before 4 seconds
+        timeout=6
+    else
+        timeout=12
+    fi
+
+    # }}}
+
+    # Test for network carrier first, and exit if we don't have it at all
+    # we should have "something" connected somewhere
+    unset OnLine
+    #for interface in $(ls /sys/class/net/ | grep -v lo);
+    for interface in /sys/class/net/*
+    do
+        interface="${interface##*/}"
+        if [[ "${interface}" = "lo" ]] ; then
+            continue
+        fi
+
+        if [[ $(cat /sys/class/net/$interface/carrier 2>/dev/null ) = 1 ]]; then
+            if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+                el_debug "carrier for $interface marks that we are connected"
+            fi
+
+            OnLine=1;
+            break
+        fi
+    done
+
+
+    # cache online (10 min)
+    if [[ -n "$OnLine" ]] ; then
+        if [[ -s "$stamp_hour_prev" ]] ; then
+            buf="$( echo "$(date +%s) - $( stat -c %Y "${stamp_hour_prev}" )" 2>/dev/null | LC_ALL="$EL_LC_EN" bc -l | sed -e 's|\..*$||g' )"
+            if [[ -n "$buf" ]] && [[ "$buf" -lt 600 ]] ; then
+
+                # if anything tell us that we are connected and we was before, we should still be
+                el_dependencies_check "route"
+                if /sbin/route -n | grep -qsE "0\.0\.0\.0.*\s+UG\s+" || ip route | grep -qs "default via" ; then
+                    if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+                        el_debug "seems like we still online, using cache + small checks"
+                    fi
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+
+    # we have not finished from the caches, so remove them so we will avoid the next check loops
+    rm -f "$stamp_hour_prev"
+
+
+    # do a ping check
+    if el_verify_internet_ping $timeout ; then
+        echo "$date_hour_now" > "$stamp_hour_prev"
+        if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+            el_debug "connection to internet found at ping level"
+        fi
+        return 0
+    fi
+
+
+
+    # still in fast check ? return
+    if [[ "${mode}" = "fast" ]] ; then
+        return 1
+    fi
+
+
+    # check for connection to internet using curl instead
+    if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+        el_debug "let's do a last check using a curl to google"
+    fi
+
+    el_dependencies_check "curl"
+    if timeout 9 curl --connect-timeout 8 www.google.com 2>/dev/null | grep -qsi 'html' ; then
+        echo "$date_hour_now" > "$stamp_hour_prev"
+        if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+            el_debug "connection to internet finally using curl"
+        fi
+
+        return 0
+    else
+        if [[ "${EL_DEBUG}" -gt "3" ]] ; then
+            el_debug "Connection to internet not found"
+        fi
+
+        return 1
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Make ready the user's environment (bash variables, extra functions, etc)
+#-------------------------------------------------------------------------------
+el_make_environment(){ # make ready our environment (source variables and functions)
+    if [[ -f "/etc/adduser.conf" ]] ; then
+        source /etc/adduser.conf
+    fi
+
+    # set user
+    if [[ -z "${USER}" ]] ; then
+        USER="$(whoami)"
+        export USER
+    fi
+
+    # set home
+    if [[ -z "${HOME}" ]] ; then
+        if [[ -n "${DHOME}" ]] ; then
+            HOME="${DHOME}/$USER"
+            export HOME
+        else
+            HOME="/home/$USER"
+            export HOME
+        fi
+    fi
+
+    # give display access
+    el_set_display_variables
+
+    #if [[ "$PATH" != *"$HOME/bin"* ]] ; then
+        #PATH="$HOME/bin:$PATH"
+    #fi
+
+    if [[ -n "${SOURCE}" ]] ; then
+        #export PS4='+ ($(basename ${0}):${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}():  }'
+        #export PS4='+ [$(basename ${0})|${FUNCNAME[0]:+${FUNCNAME[0]}}|${LINENO}]  '
+        export PS4='+ [$(basename ${SOURCE} 2>/dev/null )  ${FUNCNAME[0]:+${FUNCNAME[0]}} ${LINENO}]  '
+    fi
+
+    # XDG default directories
+    if [[ -z "${XDG_CONFIG_HOME}" ]] || [[ ! -d "$XDG_CONFIG_HOME" ]] ; then
+        XDG_CONFIG_HOME="${HOME}/.config"
+        if [[ ! -d "$XDG_CONFIG_HOME" ]] ; then
+            mkdir -p "$XDG_CONFIG_HOME"
+        fi
+    fi
+
+    if [[ -z "${XDG_CACHE_HOME}" ]] || [[ ! -d "$XDG_CACHE_HOME" ]] ; then
+        XDG_CACHE_HOME="${HOME}/.cache"
+        if [[ ! -d "$XDG_CACHE_HOME" ]] ; then
+            mkdir -p "$XDG_CACHE_HOME"
+        fi
+    fi
+
+
+
+}
+
+#-------------------------------------------------------------------------------
+#   Title Set: sets the title of a window
+#-------------------------------------------------------------------------------
+el_title_set(){ # set the Title on the actual Window
+
+    el_set_display_variables
+    echo -ne '\033]0;'$@'\007'
+
+}
+
+#-------------------------------------------------------------------------------
+#   Resolutions, get the resolution values
+#-------------------------------------------------------------------------------
+el_resolution_get(){ # show our actual resolution
+
+    el_dependencies_check xdpyinfo
+    el_set_display_variables
+
+    xdpyinfo | grep dimension | awk '{print $2}' | grep x | tail -1
+
+}
+
+#-------------------------------------------------------------------------------
+#   Dependencies Check
+#-------------------------------------------------------------------------------
+el_check_dependencies(){
+    # compatibility
+    el_warning "$FUNCNAME is moved to 'el_dependencies_check', update or report this code (full compatibility still working, don't worry)"
+    el_dependencies_check "$@"
+}
+
+el_dependencies_check(){ # check if we have these command dependencies, if not, notify and exit
+    # example:  el_dependencies_check gmplayer,find,sed,etc
+    local check found found_no dir
+
+    while read -ru 3 check
+    do
+        unset found
+
+        for dir in $(echo ${PATH}:/usr/local/sbin:/usr/sbin:/sbin | tr ':' ' ')
+        do
+            if test -x ${dir}/$check
+            then
+                found=yes
+                break
+            fi
+        done
+
+        if [[ "$found" != "yes" ]] ; then
+            #el_notify_user "Command Not Found" "Error: command '$check' for $(basename $0) not found"
+            NOREPORTS=1 el_error "Command '$check' for $(basename $0) not found, func: ${FUNCNAME[1]}"
+            found_no="yes"
+        fi
+
+    done 3<<< "$( echo "$@" | tr ',' '\n' )"
+
+    if [[ "$found_no" = "yes" ]] ; then
+        return 1
+    else
+
+        return 0
+    fi
+
+}
+
+
+#-------------------------------------------------------------------------------
+#   Install required packages
+#-------------------------------------------------------------------------------
+el_dependencies_install(){
+    local depends temp
+    depends="$( echo "$@" | tr ',' ' ' )"
+    el_set_display_variables
+
+    # TODO: move to terminology when compatibility will be implemented
+    # TODO:  even better: use a gui tool for install deps
+    el_dependencies_check urxvt
+
+    temp="/tmp/.$(basename $0)-${USER}-$$"
+    cat > "${temp}" << EOF
+#!/bin/bash
+
+if [[ -x "\$( which urxvt )" ]] ; then
+urxvt -T 'Installing Packages' -e bash -c "source /usr/lib/elive-tools/functions ; export DEBIAN_FRONTEND=noninteractive ; el_aptget_update ; apt-get -f install ; echo ; echo ; if ! apt-get install -y $depends ; then el_aptget_update force ; if ! apt-get install -y $depends ; then apt-get -f install ; el_aptget_update force ; apt-get install $depends ; fi ; fi ; echo ; echo ; echo ; echo ; echo 'All Done' ; sleep 2 "
+else
+    if [[ -n "\$TERM" ]] ; then
+        su -c "source /usr/lib/elive-tools/functions ; export DEBIAN_FRONTEND=noninteractive ; el_aptget_update ; apt-get -f install ; echo ; echo ; if ! apt-get install -y $depends ; then el_aptget_update force ; if ! apt-get install -y $depends ; then apt-get -f install ; el_aptget_update force ; apt-get install $depends ; fi ; fi ; echo ; echo ; echo ; echo ; echo 'All Done' " root
+    else
+        el_error "unable to intall dependencies, we don't have access to urxvt or a terminal to do it"
+        sleep 4
+    fi
+fi
+
+EOF
+
+    chmod +x "${temp}"
+    if [[ "$UID" = 0 ]] ; then
+        bash "$temp"
+    else
+        if el_check_sudo_automated ; then
+            for i in 1 2 3
+            do
+                if sudo -H bash "$temp" ; then
+                    is_password_ok=1
+                    break
+                fi
+            done
+    else
+        if ! el_dependencies_check gksu ; then
+            if [[ -x "$( which urxvt )" ]] ; then
+                urxvt -e bash -c "su -c 'DEBIAN_FRONTEND=noninteractive apt-get update' root"
+                urxvt -e bash -c "su -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y gksu' root"
+            else
+                if [[ -n "$TERM" ]] ; then
+                    # if we are in this condition maybe we are in a non-desktop install, so we don't want these things
+                    true
+                else
+                    su -c 'apt-get update ; DEBIAN_FRONTEND=noninteractive apt-get install -y gksu' root
+                fi
+            fi
+        fi
+
+        # multiple gksu attempts
+        for i in 1 2 3
+        do
+            if [[ -x "$( which gksu )" ]] ; then
+            if gksu "$temp" ; then
+                is_password_ok=1
+                break
+            fi
+            else
+                if [[ -n "$TERM" ]] ; then
+                    el_info "Going to install some dependencies, insert root password"
+                    su -c "$temp" root
+                else
+                    el_error "unable to run $temp, we don't have gksu, graphical system, or even a terminal where to do it"
+                fi
+            fi
+        done
+        fi
+
+        if ! ((is_password_ok)) && [[ "${DISPLAY}" = ":0.0" ]] ; then
+            timeout 40 $guitool --error --text="${SOURCE}: "$( eval_gettext "Wrong password" )""
+        fi
+    fi
+    rm -f "${temp}"
+
+}
+
+#-------------------------------------------------------------------------------
+#   Run apt-get update
+#-------------------------------------------------------------------------------
+el_aptget_update(){
+    local message_updating force want_update buf
+    force="$1"
+
+    el_set_display_variables
+
+
+    if [[ "$force" = "force" ]] ; then
+        want_update=1
+    fi
+
+    if [[ -e "/var/lib/apt/periodic/update-success-stamp" ]] ; then
+        buf="$( echo "$(date +%s) - $( stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null )" | LC_ALL="$EL_LC_EN" bc -l | sed -e 's|\..*$||g' )"
+        if [[ -n "$buf" ]] && [[ "$buf" -gt 14400 ]] ; then
+            want_update=1
+        fi
+    else
+        want_update=1
+    fi
+
+    if ((want_update)) ; then
+        # only run update if we have not updated already 4 hours ago
+        local _dummy
+        _dummy="$( printf "$( eval_gettext "Updating list of packages" )" )"
+        # note: to have translated the next message we need a different declaration ^ so that the string is considered into the including for translate (without TEXTDOMAIN)
+        message_updating="$( printf "$( TEXTDOMAIN="elive-tools" eval_gettext "Updating list of packages" )" )"
+
+        if ! el_verify_internet 2>/dev/null 1>&2 ; then
+            el_error "We need to update the packages lists but we don't have internet? continuing anyways..."
+        fi
+
+        if [[ "$UID" = 0 ]] ; then
+            if [[ "${DISPLAY}" = ":0.0" ]] && ! ((is_quiet)) ; then
+                { apt-get update || apt-get update ; } | $guitool --progress --pulsate --percentage=0 --auto-close --text="$message_updating"
+            else
+                apt-get update || apt-get update
+            fi
+        else
+            if el_check_sudo_automated ; then
+                if [[ "${DISPLAY}" = ":0.0" ]] && ! ((is_quiet)) ; then
+                    { sudo apt-get update || sudo apt-get update ; } | $guitool --progress --pulsate --percentage=0 --auto-close --text="$message_updating"
+                else
+                    sudo apt-get update || sudo apt-get update
+                fi
+            else
+                if [[ "${DISPLAY}" = ":0.0" ]] ; then
+                    if ! el_dependencies_check gksu ; then
+                        el_dependencies_install "gksu"
+                    fi
+                    #gksu apt-get update | $guitool --progress --pulsate --percentage=0 --auto-close --text="$message_updating"
+                    # multiple gksu attempts
+                    for i in 1 2 3
+                    do
+                        if gksu "$temp" ; then
+                            if gksu apt-get update | $guitool --progress --pulsate --percentage=0 --auto-close --text="$message_updating" ; then
+                                is_password_ok=1
+                                break
+                            fi
+                        fi
+                    done
+
+                    if ! ((is_password_ok)) && [[ "${DISPLAY}" = ":0.0" ]] ; then
+                        timeout 40 $guitool --error --text="${SOURCE}: "$( eval_gettext "Wrong password" )""
+                    fi
+
+                else
+                    su -c "apt-get update || apt-get update" root
+                fi
+            fi
+        fi
+
+    else
+        el_explain 2 "Packages lists already updated at least 4 hours ago, skipping update"
+    fi
+}
+#-------------------------------------------------------------------------------
+#   Check if a newer version of a package exists
+#-------------------------------------------------------------------------------
+el_package_newer_check(){
+    local package installed candidate
+    # XXX important: this uses apt caches, doesn't check for online version
+
+    package="$1"
+
+    if [[ -z "$package" ]] ; then
+        return 2
+    fi
+
+    installed="$( LC_ALL="$EL_LC_EN" apt-cache policy "$package" | grep "Installed:" | sed -e 's|^.*Installed: ||g' | head -1 | grep -E "^[[:digit:]]*" )"
+    read -r installed <<< "$installed"
+
+    candidate="$( LC_ALL="$EL_LC_EN" apt-cache policy "$package" | grep "Candidate:" | sed -e 's|^.*Candidate: ||g' | head -1 | grep -E "^[[:digit:]]*" )"
+    read -r candidate <<< "$candidate"
+
+
+    if [[ -n "$installed" ]] && [[ -n "$candidate" ]] ; then
+        if dpkg --compare-versions "${candidate}" gt "${installed}" ; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        el_error "no versions get correctly for package ${package}, installed is '${installed}', candidate is '${candidate}', func: ${FUNCNAME[1]}"
+        return 1
+    fi
+}
+
+#-------------------------------------------------------------------------------
+#   Check if variable exists
+#-------------------------------------------------------------------------------
+el_check_variables(){ # check if we have set these variables, if not, notify and exit
+    # example $0 foo,bar,we
+    # note: if you get an error from this function, note that the function needs to be called with the varname, not its $value
+    local found_no var
+
+    while read -ru 3 var
+    do
+        if [[ -n "$ZSH_VERSION" ]] ; then
+            if [[ ! -n "${(P)var}" ]] ; then
+                NOREPORTS=1 el_error "Variable '$var' is not set, func: ${FUNCNAME[1]}"
+                found_no="yes"
+            fi
+        else
+            if [[ ! -n "${!var}" ]] ; then
+                NOREPORTS=1 el_error "Variable '$var' is not set, func: ${FUNCNAME[1]}"
+                found_no="yes"
+            fi
+        fi
+    done 3<<< "$( echo "$@" | tr ',' '\n' )"
+
+    if [[ "$found_no" = "yes" ]] ; then
+
+        return 1
+    else
+
+        return 0
+    fi
+
+}
+
+
+#-------------------------------------------------------------------------------
+#   Check if files exists
+#-------------------------------------------------------------------------------
+el_check_files(){ # check if we have these files (and non-zero), if not, notify and exit
+    # example $0 foo,bar,we
+    local var found_no
+
+    if [[ -z "$1" ]] ; then
+        echo -e "E: $FUNCNAME called without parameters (nothing to check?)" 1>&2
+
+        return 1
+    fi
+
+    while read -ru 3 var
+    do
+        if [[ ! -s "${var}" ]] ; then
+            #el_notify_user "E: File not exists" "E: the file '$var' not exists"
+            NOREPORTS=1 el_error "File '$var' not exist, func: ${FUNCNAME[1]}"
+            found_no="yes"
+        fi
+    done 3<<< "$( echo "$@" | tr ',' '\n' )"
+
+    if [[ "$found_no" = "yes" ]] ; then
+
+        return 1
+    else
+
+        return 0
+    fi
+
+}
+
+
+#-------------------------------------------------------------------------------
+#   Check if dir exists
+#-------------------------------------------------------------------------------
+el_check_dirs(){ # check if we have these dirs (and non-zero), if not, notify and exit
+    # example $0 foo,bar,we
+    local var found_no
+
+    if [[ -z "$1" ]] ; then
+        echo -e "E: $FUNCNAME called without parameters (nothing to check?)" 1>&2
+
+        return 1
+    fi
+
+    while read -ru 3 var
+    do
+        if [[ ! -d "${var}" ]] ; then
+            #el_notify_user "E: Dir not exists" "E: the dir '$var' not exist"
+            NOREPORTS=1 el_error "Directory '$var' not exist, func: ${FUNCNAME[1]}"
+            found_no="yes"
+        fi
+    done 3<<< "$( echo "$@" | tr ',' '\n' )"
+
+    if [[ "$found_no" = "yes" ]] ; then
+
+        return 1
+    else
+
+        return 0
+    fi
+
+}
+
+
+#-------------------------------------------------------------------------------
+#   check if dir has files
+#-------------------------------------------------------------------------------
+el_check_dir_has_files(){
+    local dir f files
+
+    while read -ru 3 dir
+    do
+        if [[ -z "$1" ]] ; then
+            echo -e "E: $FUNCNAME called without parameters (nothing to check?)" 1>&2
+
+            return 1
+        fi
+
+        if [[ ! -d "$dir" ]] && [[ ! -L "$dir" ]] ; then
+            #el_notify_user "Dir not exist" "$dir"
+            el_debug "Directory '$dir' not exist, func: ${FUNCNAME[1]}"
+
+            return 1
+        else
+            files="$( command ls "${dir%/}/"* 2>/dev/null | wc -l )"
+            if ! [[ "$files" -gt 0 ]] ; then
+                el_debug "Directory '$dir' doesn't contain any file, func: ${FUNCNAME[1]}"
+
+                return 1
+            fi
+        fi
+    done 3<<< "$( echo "$@" | tr ',' '\n' )"
+
+}
+
+#-------------------------------------------------------------------------------
+#   check if we have automatic sudo
+#-------------------------------------------------------------------------------
+el_check_sudo_automated(){
+
+    if ! sudo -H -n echo 2>/dev/null 1>/dev/null ; then
+        #el_notify_user "Automated sudo is required" "Your sudo requires a password, we need it to be configured for not request it"
+        el_debug "Automated sudo is required: Your sudo requires a password, we need it to be configured for not request it, func: ${FUNCNAME[1]}"
+
+        return 1
+    else
+
+        return 0
+    fi
+
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_sudo
+#   DESCRIPTION:  run a command from root, as much as possible
+#    PARAMETERS:  args/command
+#       RETURNS:  -
+#===============================================================================
+el_sudo(){
+    # pre {{{
+    local args
+    el_security_function_loop || return
+
+    args="$@"
+    el_check_variables "args"
+
+    el_set_display_variables
+
+    # }}}
+    if el_check_sudo_automated 2>/dev/null 1>&2 ; then
+        sudo -H "$@"
+    else
+        if [[ "${DISPLAY}" = ":0.0" ]] ; then
+            if ! el_dependencies_check gksu ; then
+                el_dependencies_install "gksu"
+            fi
+
+            # multiple gksu attempts
+            for i in 1 2 3
+            do
+                if gksu "$@" ; then
+                    is_password_ok=1
+                    break
+                fi
+            done
+
+            if ! ((is_password_ok)) && [[ "${DISPLAY}" = ":0.0" ]] ; then
+                timeout 40 $guitool --error --text="${SOURCE}: "$( eval_gettext "Wrong password" )""
+            fi
+        else
+            su -c "$@" root
+        fi
+    fi
+
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_check_translations_required
+#   DESCRIPTION:  check the amount of translations made for actual application
+#    PARAMETERS:  -
+#   RETURNS:      true or false
+#===============================================================================
+el_check_translations_required(){
+    # pre {{{
+    local textdomaindir stat percentage_untranslated is_translation_required
+
+
+    if [[ -n "$TEXTDOMAINDIR" ]] ; then
+        textdomaindir="$TEXTDOMAINDIR"
+    else
+        textdomaindir="/usr/share/locale"
+    fi
+
+    # dont annoy users in the stable released
+    if ! el_check_version_development ; then
+        return 1
+    fi
+
+    # }}}
+
+    if [[ -n "$TEXTDOMAIN" ]] ; then
+        # we already said it ?
+        if el_flag check "translation_required_${TEXTDOMAIN}" ; then
+            return 1
+        fi
+        el_flag add "translation_required_${TEXTDOMAIN}"
+
+        # deprecated location
+        #stat="${textdomaindir}/${LANG%%_*}/statistics/${TEXTDOMAIN}.txt"
+        stat="/var/cache/elive-translations/statistics/${LANG%%_*}/${TEXTDOMAIN}.txt"
+
+        if [[ -s "${stat}" ]] ; then
+            percentage_untranslated="$(cat "${stat}" | grep messages_untranslated_percentage | awk '{print $2}' | tail -1 )"
+
+            if [[ -n "${percentage_untranslated}" ]] && [[ "${percentage_untranslated}" -gt 6 ]] ; then
+                is_translation_required=1
+            fi
+        fi
+    fi
+
+    if ((is_translation_required)) ; then
+        return 0
+    else
+        return 1
+    fi
+
+}
+el_check_translations_required_notify(){
+    el_warning "deprecated function $FUNCNAME from elive-tools functions, use el_check_translations_required instead"
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_check_version_development
+#   DESCRIPTION:  checks if we are in a development version
+#    PARAMETERS:  -
+#       RETURNS:  true if we are development state, false if we are stable
+#===============================================================================
+el_check_version_development(){
+    if [[ -e "/etc/elive-version" ]] ; then
+        if [[ "$( grep "^stable-release" /etc/elive-version | awk '{print $2}' )" = yes ]] ; then
+            return 1
+        else
+            return 0
+        fi
+    else
+        NOREPORTS=1 el_error "File /etc/elive-version not found, func: ${FUNCNAME[1]}"
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_elive_version_get
+#   DESCRIPTION:  Get the version number of the HOST (installed) elive system
+#    PARAMETERS:  -
+#       RETURNS:  version number
+#===============================================================================
+el_elive_version_get(){
+    # pre {{{
+    local version
+    el_debug
+    el_security_function_loop || return
+
+    # }}}
+    version="$( grep "^elive-version: " "/etc/elive-version" )"
+    version="${version#elive-version: }"
+
+    if [[ -z "$version" ]] ; then
+        version="2.9.99"
+    fi
+
+    if [[ -n "$version" ]] ; then
+        echo "$version"
+    else
+        el_error "Unable to get this version of Elive ID number"
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_check_version_is_days_recent
+#   DESCRIPTION:  check if this version is less than $1 ~days old
+#    PARAMETERS:  $1 = days old to check
+#       RETURNS:  true if is less than $1 old, false if we are older than it
+#===============================================================================
+el_check_version_is_days_recent(){
+    # pre {{{
+    local date_builded_y date_builded_m date_builded_d date_today_y date_today_m date_today_d days_required date_builded date_today date_builded_total_days days_difference
+    el_debug
+    el_security_function_loop || return
+
+    days_required="$1"
+
+    # }}}
+
+    # calculate date builded {{{
+
+    date_builded="$( grep "^date-builded" /etc/elive-version | sed -e 's|date-builded: ||g' )"
+    if [[ -z "$date_builded" ]] ; then
+        date_builded="2018-05-00"
+    fi
+
+    date_builded_y="${date_builded%%-*}"
+
+    date_builded_m="${date_builded%-*}"
+    date_builded_m="${date_builded_m#*-}"
+    date_builded_m="${date_builded_m#0}"
+
+    date_builded_d="${date_builded##*-}"
+    date_builded_d="${date_builded_d#0}"
+
+    date_builded_total_days="$(( ${date_builded_m} * 30 + ${date_builded_d} ))"
+    date_builded_total_days="$(( ${date_builded_y} * 365 + ${date_builded_total_days} ))"
+
+    # - calculate date builded }}}
+    # calculate date today {{{
+
+    date_today="$( date +%F )"
+
+    date_today_y="${date_today%%-*}"
+
+    date_today_m="${date_today%-*}"
+    date_today_m="${date_today_m#*-}"
+    date_today_m="${date_today_m#0}"
+
+    date_today_d="${date_today##*-}"
+    date_today_d="${date_today_d#0}"
+
+    date_today_total_days="$(( ${date_today_m} * 30 + ${date_today_d} ))"
+    date_today_total_days="$(( ${date_today_y} * 365 + ${date_today_total_days} ))"
+
+    # - calculate date today }}}
+    el_check_variables "date_builded,date_today,date_builded_total_days,date_today_total_days"
+    days_difference="$(( ${date_today_total_days} - ${date_builded_total_days} ))"
+
+    if [[ "$days_difference" -le "$days_required" ]] ; then
+        return 0
+    else
+        return 1
+    fi
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_check_version_development_is_days_recent
+#   DESCRIPTION:  check if this development version is less than $1 ~days old
+#    PARAMETERS:  $1 = days old to check
+#       RETURNS:  true if is less than $1 old, false if we are older than it
+#===============================================================================
+el_check_version_development_is_days_recent(){
+    # pre {{{
+    local date_builded_y date_builded_m date_builded_d date_today_y date_today_m date_today_d days_required date_builded date_today date_builded_total_days days_difference
+    el_debug
+    el_security_function_loop || return
+
+    days_required="$1"
+
+    if ! el_check_version_development ; then
+        # stable versions should be not considered recent dev versions
+        return 1
+    fi
+
+    # }}}
+
+    # calculate date builded {{{
+
+    date_builded="$( grep "^date-builded" /etc/elive-version | sed -e 's|date-builded: ||g' )"
+    if [[ -z "$date_builded" ]] ; then
+        date_builded="2018-05-00"
+    fi
+
+    date_builded_y="${date_builded%%-*}"
+
+    date_builded_m="${date_builded%-*}"
+    date_builded_m="${date_builded_m#*-}"
+    date_builded_m="${date_builded_m#0}"
+
+    date_builded_d="${date_builded##*-}"
+    date_builded_d="${date_builded_d#0}"
+
+    date_builded_total_days="$(( ${date_builded_m} * 30 + ${date_builded_d} ))"
+    date_builded_total_days="$(( ${date_builded_y} * 365 + ${date_builded_total_days} ))"
+
+    # - calculate date builded }}}
+    # calculate date today {{{
+
+    date_today="$( date +%F )"
+
+    date_today_y="${date_today%%-*}"
+
+    date_today_m="${date_today%-*}"
+    date_today_m="${date_today_m#*-}"
+    date_today_m="${date_today_m#0}"
+
+    date_today_d="${date_today##*-}"
+    date_today_d="${date_today_d#0}"
+
+    date_today_total_days="$(( ${date_today_m} * 30 + ${date_today_d} ))"
+    date_today_total_days="$(( ${date_today_y} * 365 + ${date_today_total_days} ))"
+
+    # - calculate date today }}}
+    el_check_variables "date_builded,date_today,date_builded_total_days,date_today_total_days"
+    days_difference="$(( ${date_today_total_days} - ${date_builded_total_days} ))"
+
+    if [[ "$days_difference" -le "$days_required" ]] ; then
+        return 0
+    else
+        return 1
+    fi
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_check_is_shell
+#   DESCRIPTION:  check if we are running from a shell
+#    PARAMETERS:  -
+#       RETURNS:  true if we are a shell, false if we are not
+#===============================================================================
+el_check_is_shell(){
+    # pre {{{
+    #el_security_function_loop || return
+
+    # }}}
+    # check when in bash
+    if [[ "$0" = "bash" ]] ; then
+        return 0
+    fi
+
+    # check when in zsh
+    if [[ -n "$ZSH_VERSION" ]] && [[ "$SOURCE" = "/usr/lib/elive-tools/functions" ]] ; then
+        return 0
+    fi
+
+    # anything else is a script
+    return 1
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_explain
+#   DESCRIPTION:  function to show the progress of the application
+#    PARAMETERS:
+# verbose_level:    $1 = any number, from $EL_DEBUG levels
+#                        levels: 0 = always|error, 1 = warning, 2 = info, 3 = debug
+#       message:    $2 = can include: __hilight words__, XXsuper hilightXX
+#===============================================================================
+el_explain(){
+    # pre {{{
+    if ! ((is_terminal)) ; then
+        return
+    fi
+    local funclevel spaced verbose_level message trace_message trace_col
+
+    verbose_level="$1"
+    shift
+    message="$@"
+
+    #spaced="$verbose_level"
+    funclevel="$(( ${#FUNCNAME[*]} - 2 ))"
+
+    el_check_variables "verbose_level,message"
+    # }}}
+    # tabulate output {{{
+    #while [[ $spaced -gt 0 ]] ; do
+        #message="  $message"
+        #spaced="$(( $spaced - 1 ))"
+    #done
+
+    # }}}
+    # hilight words {{{
+    message="${message/__/${el_c_b}}"
+    message="${message/__/${el_c_gr}}"
+    message="${message/__/${el_c_b}}"
+    message="${message/__/${el_c_gr}}"
+    message="${message/__/${el_c_b}}"
+    message="${message/__/${el_c_gr}}"
+    message="${message/XX/${el_c_r}}"
+    message="${message/XX/${el_c_gr}}"
+    message="${message/XX/${el_c_r}}"
+    message="${message/XX/${el_c_gr}}"
+    message="${message/XX/${el_c_r}}"
+    message="${message/XX/${el_c_gr}}"
+    # }}}
+    # show {{{
+    # this is a good example of levels of colors visualization for the user's eye
+
+    # show only if we are on this verbose level
+    if [[ "${EL_DEBUG}" -ge "$verbose_level" ]] ; then
+
+        # show normal message unless we are at a debugging level
+        if [[ "${EL_DEBUG}" -ge 3 ]] ; then
+            case $funclevel in
+                1)
+                    echo -en " ${el_c_gr}[${el_c_b2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                2)
+                    echo -en " ${el_c_gr}[${el_c_b}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                3)
+                    echo -en " ${el_c_gr}[${el_c_c2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                4)
+                    echo -en " ${el_c_gr}[${el_c_c}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                5)
+                    echo -en " ${el_c_gr}[${el_c_g2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                6)
+                    echo -en " ${el_c_gr}[${el_c_g}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                7)
+                    echo -en " ${el_c_gr}[${el_c_y2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                8)
+                    echo -en " ${el_c_gr}[${el_c_y}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                9)
+                    echo -en " ${el_c_gr}[${el_c_r2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                10)
+                    echo -en " ${el_c_gr}[${el_c_r}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                11)
+                    echo -en " ${el_c_gr}[${el_c_m2}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+                *)
+                    echo -en " ${el_c_gr}[${el_c_m}${verbose_level}${el_c_gr}] " 1>&2
+                    ;;
+            esac
+        else
+            echo -en "${el_c_gr}  " 1>&2
+        fi
+
+        # continuation of the message
+        echo -e "${message}${el_c_n}" 1>&2
+
+    fi
+
+    # }}}
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_debug
+#   DESCRIPTION:  show debug messages | EL_DEBUG -ge 3|4
+#    PARAMETERS:  optional (message)
+#===============================================================================
+el_debug(){
+    # pre {{{
+    local count counter funcnames sourcenames arg sourcename message
+    message="$@"
+
+    # don't show debug messages from this own tool (like if we are in a shell and the functions calls themselves)
+    if el_check_is_shell ; then
+        true
+    else
+        # check if we have the variable set, because we need to use it (so this may not work in ZSH)
+        if [[ -z "${BASH_SOURCE[@]}" ]] ; then
+            return
+        fi
+    fi
+
+    # }}}
+    # get the list of function names array {{{
+    counter="${#FUNCNAME[*]}"
+    count=0
+    for arg in "${FUNCNAME[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ "$arg" != "source" ]] && [[ "$arg" != "main" ]] ; then
+                funcnames="$arg > $funcnames"
+            fi
+        fi
+    done
+    funcnames="${funcnames% >*}"
+
+    counter="${#BASH_SOURCE[*]}"
+    count=0
+    for arg in "${BASH_SOURCE[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ -n "$arg" ]] ; then
+                arg="$( readlink -f "$arg" || true )"
+                el_array_member_add "$arg >" "${sourcenames[@]}" ; sourcenames=("${_out[@]}")
+            fi
+        fi
+    done
+
+    sourcename="$( readlink -f "$0" || true )"
+    if [[ -n "$sourcenames" ]] ; then
+        if [[ "${sourcenames[@]}" = "$sourcename >"* ]] ; then
+            sourcenames="$( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        else
+            sourcenames="$sourcename $( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        fi
+        sourcenames="${sourcenames% }"
+        sourcenames="${sourcenames#> }"
+        #read -r sourcenames <<< "$sourcenames"
+    else
+        sourcenames="$sourcename"
+    fi
+
+    # }}}
+    # show debug {{{
+
+    if [[ "${EL_DEBUG}" -ge 3 ]] ; then
+        if ((is_terminal)) ; then
+            if [[ -n "${BASH_SOURCE[@]}" ]] && [[ "${EL_DEBUG}" -ge 3 ]] ; then
+                if [[ -n "$message" ]] ; then
+                    echo -e "${el_c_c}D: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames}] ${el_c_c}$message${el_c_n}" 1>&2
+                else
+                    echo -e "${el_c_gr}C: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames}]${el_c_n}" 1>&2
+                fi
+            else
+                if [[ -n "$message" ]] ; then
+                    echo -e "${el_c_c}D: ${el_c_c}$message${el_c_n}" 1>&2
+                fi
+            fi
+        #else
+            #if [[ "$DISPLAY" = ":0.0" ]] && el_check_version_development ; then
+                #timeout 40 $guitool --info --text="Debug: ${SOURCE}: $message" || true
+            #fi
+        fi
+    fi
+
+    # }}}
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_info
+#   DESCRIPTION:  show info messages | (always)
+#    PARAMETERS:  message
+#===============================================================================
+el_info(){
+    # pre {{{
+    local count counter funcnames sourcenames arg sourcename message
+    message="$@"
+
+    # }}}
+    # get the list of function names array {{{
+    counter="${#FUNCNAME[*]}"
+    count=0
+    for arg in "${FUNCNAME[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ "$arg" != "source" ]] && [[ "$arg" != "main" ]] ; then
+                funcnames="$arg > $funcnames"
+            fi
+        fi
+    done
+    funcnames="${funcnames% >*}"
+
+    counter="${#BASH_SOURCE[*]}"
+    count=0
+    for arg in "${BASH_SOURCE[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ -n "$arg" ]] ; then
+                arg="$( readlink -f "$arg" || true )"
+                el_array_member_add "$arg >" "${sourcenames[@]}" ; sourcenames=("${_out[@]}")
+            fi
+        fi
+    done
+
+    sourcename="$( readlink -f "$0" || true )"
+    if [[ -n "$sourcenames" ]] ; then
+        if [[ "${sourcenames[@]}" = "$sourcename >"* ]] ; then
+            sourcenames="$( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        else
+            sourcenames="$sourcename $( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        fi
+        sourcenames="${sourcenames% }"
+        sourcenames="${sourcenames#> }"
+        #read -r sourcenames <<< "$sourcenames"
+    else
+        sourcenames="$sourcename"
+    fi
+
+    # }}}
+    # show info {{{
+
+    if [[ "${EL_DEBUG}" -ge 2 ]] ; then
+        if ((is_terminal)) ; then
+            if [[ -n "${BASH_SOURCE[@]}" ]] && [[ "${EL_DEBUG}" -ge 3 ]] ; then
+                echo -e "${el_c_c2}I: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames}] ${el_c_c2}$message${el_c_n}" 1>&2
+            else
+                echo -e "${el_c_c2}I: ${el_c_c2}$message${el_c_n}" 1>&2
+            fi
+        #else
+            #if [[ "$DISPLAY" = ":0.0" ]] && el_check_version_development ; then
+                #timeout 40 $guitool --info --text="${SOURCE}: $message" || true
+            #fi
+        fi
+    fi
+
+    # }}}
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_warning
+#   DESCRIPTION:  show warning messages | EL_DEBUG -ge 1
+#    PARAMETERS:  optional (message)
+#===============================================================================
+el_warning(){
+    # pre {{{
+    local count counter funcnames sourcenames arg message
+    message="$@"
+
+    # }}}
+    # get the list of function names array {{{
+    counter="${#FUNCNAME[*]}"
+    count=0
+    for arg in "${FUNCNAME[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ "$arg" != "source" ]] && [[ "$arg" != "main" ]] ; then
+                funcnames="$arg > $funcnames"
+            fi
+        fi
+    done
+    funcnames="${funcnames% >*}"
+
+    counter="${#BASH_SOURCE[*]}"
+    count=0
+    for arg in "${BASH_SOURCE[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ -n "$arg" ]] ; then
+                el_array_member_add "$arg >" "${sourcenames[@]}" ; sourcenames=("${_out[@]}")
+            fi
+        fi
+    done
+    if [[ -n "$sourcenames" ]] ; then
+        if [[ "${sourcenames[@]}" = "$0 >"* ]] ; then
+            sourcenames="$( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        else
+            sourcenames="$0 $( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        fi
+        sourcenames="${sourcenames% }"
+        sourcenames="${sourcenames#> }"
+        #read -r sourcenames <<< "$sourcenames"
+    else
+        sourcenames="$0"
+    fi
+
+    # }}}
+    # show warning {{{
+
+    if [[ "${EL_DEBUG}" -ge 1 ]] ; then
+        if ((is_terminal)) ; then
+            if [[ -n "${BASH_SOURCE[@]}" ]] && [[ "${EL_DEBUG}" -ge 3 ]] ; then
+                echo -e "${el_c_y2}W: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames}] ${el_c_y2}$message${el_c_n}" 1>&2
+            else
+                echo -e "${el_c_y2}W: ${el_c_y2}$message${el_c_n}" 1>&2
+            fi
+        #else
+            #if [[ "$DISPLAY" = ":0.0" ]] && el_check_version_development ; then
+                #timeout 90 $guitool --warning --text="${SOURCE}: $message"
+            #fi
+        fi
+    fi
+
+    if [[ -n "${BASH_SOURCE[@]}" ]] ; then
+        # set colors for our reports
+        local el_c_n el_c_r el_c_r2 el_c_g el_c_g2 el_c_y el_c_y2 el_c_m el_c_m2 el_c_c el_c_c2 el_c_b el_c_b2
+        el_c_n="\033[0;39m" # Normal color  (orig: normal)
+        el_c_r="\033[1;31m" # Red color  (orig: red)
+        el_c_r2="\033[0;31m" # Red2 color  (orig: red)
+        el_c_g="\033[1;32m" # Green color  (orig: green)
+        el_c_g2="\033[0;32m" # Green2 color  (orig. green2)
+        el_c_y="\033[1;33m" # Yellow color  (orig. yellow)
+        el_c_y2="\033[0;33m" # Yellow2 color  (orig. yellow)
+        el_c_m="\033[1;35m" # Magenta color
+        el_c_m2="\033[0;35m" # Magenta2 color
+        el_c_c="\033[1;36m" # Cyan color
+        el_c_c2="\033[0;36m" # Cyan2 color
+        el_c_b="\033[1;34m" # Blue color
+        el_c_b2="\033[0;34m" # Blue2 color
+        el_c_gr="\033[1;30m" # Gray color
+        el_c_gr2="\033[0;30m" # Gray2 color
+
+        el_report_to_elive "${el_c_y2}W: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames} ] ${el_c_y2}$message${el_c_n}"
+    fi
+
+    # }}}
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_error
+#   DESCRIPTION:  show error messages | EL_DEBUG -ge 0
+#    PARAMETERS:  optional (message)
+#===============================================================================
+el_error(){
+    # pre {{{
+    local count counter funcnames sourcenames arg message
+    message="$@"
+
+    # }}}
+    # get the list of function names array {{{
+    counter="${#FUNCNAME[*]}"
+    count=0
+    for arg in "${FUNCNAME[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ "$arg" != "source" ]] && [[ "$arg" != "main" ]] ; then
+                funcnames="$arg > $funcnames"
+            fi
+        fi
+    done
+    funcnames="${funcnames% >*}"
+
+    counter="${#BASH_SOURCE[*]}"
+    count=0
+    for arg in "${BASH_SOURCE[@]}"
+    do
+        count="$(( $count + 1 ))"
+        if [[ "$count" -gt 1 ]] && [[ "$count" -lt "$counter" ]] ; then
+            if [[ -n "$arg" ]] ; then
+                el_array_member_add "$arg >" "${sourcenames[@]}" ; sourcenames=("${_out[@]}")
+            fi
+        fi
+    done
+    if [[ -n "$sourcenames" ]] ; then
+        if [[ "${sourcenames[@]}" = "$0 >"* ]] ; then
+            sourcenames="$( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        else
+            sourcenames="$0 $( echo "${sourcenames[@]}" | tr ' ' '\n' | tac | tr '\n' ' ' )"
+        fi
+        sourcenames="${sourcenames% }"
+        sourcenames="${sourcenames#> }"
+        #read -r sourcenames <<< "$sourcenames"
+    else
+        sourcenames="$0"
+    fi
+
+    # }}}
+    # show error {{{
+
+
+    if [[ "${EL_DEBUG}" -ge 0 ]] ; then
+        if ((is_terminal)) ; then
+            if [[ -n "${BASH_SOURCE[@]}" ]] && [[ "${EL_DEBUG}" -ge 3 ]] ; then
+                echo -e "${el_c_r}E: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames}] ${el_c_r}$message${el_c_n}" 1>&2
+            else
+                echo -e "${el_c_r}E: ${el_c_r}$message${el_c_n}" 1>&2
+            fi
+        #else
+            #if [[ "$DISPLAY" = ":0.0" ]] && el_check_version_development ; then
+                #timeout 120 $guitool --error --text="${SOURCE}: $message"
+            #fi
+        fi
+    fi
+
+    if [[ -n "${BASH_SOURCE[@]}" ]] ; then
+        # set colors for our reports
+        local el_c_n el_c_r el_c_r2 el_c_g el_c_g2 el_c_y el_c_y2 el_c_m el_c_m2 el_c_c el_c_c2 el_c_b el_c_b2
+        el_c_n="\033[0;39m" # Normal color  (orig: normal)
+        el_c_r="\033[1;31m" # Red color  (orig: red)
+        el_c_r2="\033[0;31m" # Red2 color  (orig: red)
+        el_c_g="\033[1;32m" # Green color  (orig: green)
+        el_c_g2="\033[0;32m" # Green2 color  (orig. green2)
+        el_c_y="\033[1;33m" # Yellow color  (orig. yellow)
+        el_c_y2="\033[0;33m" # Yellow2 color  (orig. yellow)
+        el_c_m="\033[1;35m" # Magenta color
+        el_c_m2="\033[0;35m" # Magenta2 color
+        el_c_c="\033[1;36m" # Cyan color
+        el_c_c2="\033[0;36m" # Cyan2 color
+        el_c_b="\033[1;34m" # Blue color
+        el_c_b2="\033[0;34m" # Blue2 color
+        el_c_gr="\033[1;30m" # Gray color
+        el_c_gr2="\033[0;30m" # Gray2 color
+
+        # always report warnings with debug (function calls)
+        el_report_to_elive "${el_c_r}E: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames} ] ${el_c_r}$message${el_c_n}"
+    fi
+
+    # }}}
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_group_check
+#   DESCRIPTION:  check if user is already on a specific group
+#    PARAMETERS:  $1 = groupname
+#===============================================================================
+el_group_check(){
+    # pre {{{
+    local group
+
+    group="${1}"
+
+    el_check_variables "group"
+
+    # }}}
+
+    if [[ " $(id -Gn "$USER") " = *" $group "* ]] ; then
+        return 0
+    else
+        return 1
+    fi
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_group_add
+#   DESCRIPTION:  verify and add an user to a group
+#    PARAMETERS:  $1 = group to add
+#===============================================================================
+el_group_add(){
+    # pre {{{
+    local group
+
+    group="$1"
+
+    el_check_variables "group"
+
+    # }}}
+    if ! el_group_check "${group}" ; then
+        if ! el_dependencies_check gksu ; then
+            el_dependencies_install "gksu"
+        fi
+        # multiple gksu attempts
+        for i in 1 2 3
+        do
+            if gksu "adduser $USER $group" ; then
+                is_password_ok=1
+                break
+            fi
+        done
+
+        if ! ((is_password_ok)) && [[ "${DISPLAY}" = ":0.0" ]] ; then
+            local message_wrong_password
+            message_wrong_password="$( printf "$( eval_gettext "Wrong password" )" "" )"
+
+            timeout 40 $guitool --error --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$message_wrong_password" )"
+        fi
+
+
+        # try again if not reached
+        if ! el_group_check "${group}" ; then
+            if ! el_dependencies_check gksu ; then
+                el_dependencies_install "gksu"
+            fi
+            # multiple gksu attempts
+            for i in 1 2 3
+            do
+                if gksu "adduser $USER $group" ; then
+                    is_password_ok=1
+                    break
+                fi
+            done
+
+            if ! ((is_password_ok)) && [[ "${DISPLAY}" = ":0.0" ]] ; then
+                local message_wrong_password
+                message_wrong_password="$( printf "$( eval_gettext "Wrong password" )" "" )"
+
+                timeout 40 $guitool --error --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$message_wrong_password" )"
+            fi
+        fi
+
+        # inform that a reboot is needed
+        if el_group_check "$group" ; then
+            el_notify_user "Your user is now added to the new group ${group}, reboot your computer for use it correctly"
+        fi
+    fi
+
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_confirm
+#   DESCRIPTION:  ask (console) for confirmation
+#    PARAMETERS:  question
+#       RETURNS:  true | false
+#===============================================================================
+el_confirm(){
+    # pre {{{
+    local reply question flag_glob
+
+    if [[ -n "$BASH_VERSION" ]] ; then
+        if shopt extglob | grep -q "extglob.*off" ; then
+            flag_glob=1
+        fi
+
+        shopt -s extglob
+    fi
+    question="$1"
+
+    el_check_variables "question"
+
+
+    # }}}
+    # return answer {{{
+    if ((is_terminal)) ; then
+        echo -en "$question [y/n]: "
+        if [[ -n $ZSH_VERSION ]] ; then
+            read reply
+        else
+            read -e reply
+        fi
+
+        case $reply in
+            y|Y|Yes|YES|s|S)
+                return  0
+                ;;
+            n|N|no|NO|nope)
+                return  1
+                ;;
+            *)
+                # repeat question until confirmation
+                if el_confirm "$@" ; then
+                    return 0
+                else
+                    return 1
+                fi
+                ;;
+        esac
+    else
+        el_set_display_variables
+
+        if [[ "${DISPLAY}" = ":0.0" ]] ; then
+            if $guitool --question --text="$question" ; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    fi
+
+    if ((flag_glob)) ; then
+        shopt -u extglob
+    fi
+
+    # }}}
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_security_function_loop
+#   DESCRIPTION:  check for a possible infinite-loops, needs to be called as:
+#                 el_security_function_loop || return
+#                 from every function of your scripts
+#    PARAMETERS:  $1 = number of recursivity's allowed
+#       RETURNS:  1 if found a loop, 0 if not
+#===============================================================================
+el_security_function_loop(){
+    # pre {{{
+    local funclevels funclevel count_recursive recursives_allowed is_loop_infinite is_loop_predetected
+
+    # }}}
+    # high value of count_recursive if we call a function recursively multiple times
+    if [[ -n "$1" ]] ; then
+        recursives_allowed="$1"
+    fi
+
+    funclevels="$(( ${#FUNCNAME[*]} - 2 ))"
+    funclevel="${funclevels}"
+
+    if [[ -n "$recursives_allowed" ]] ; then
+        count_recursive="$(( 1 + $recursives_allowed ))"
+    else
+        count_recursive="4"
+    fi
+
+
+    # walk around our parent functions
+    while [[ $funclevel -gt 0 ]] ; do
+        # ignore the last check, which is of course the same name
+        if [[ "${count_recursive}" -lt "$funclevels" ]] ; then
+            # check if we already come from our function-name in our parents
+            if [[ "${FUNCNAME[$funclevel]}" = "${FUNCNAME[1]}" ]] ; then
+                if ((is_loop_predetected)) ; then
+                    # already entered loop, we should break the loop and continue gracefully
+                    is_loop_infinite=1
+                else
+                    # give at least a chance to the infinite-loop, but we shouldn't
+                    is_loop_predetected=1
+                fi
+            fi
+        fi
+
+
+        funclevel="$(( $funclevel - 1 ))"
+        count_recursive="$(( $count_recursive + 1 ))"
+    done
+
+
+    # do action for our resulting checks
+    if ((is_loop_predetected)) ; then
+        if ((is_loop_infinite)) ; then
+            # note: we set it as a warning instead of error because it is really a way that solves errors making the application working, at least for "smart" applications (no linear procedure but a set of tasks and where the application is meant to know what to do)
+            if [[ "${EL_DEBUG}" -ge "1" ]] ; then
+                echo -e "${el_c_y}W: Entered in an Infinite Loop, let's jump it${el_c_n}" 1>&2
+                #echo -e "Note: Declarative type of programming requires this feature for work correctly, in short, if the application works correctly then everything is fine." 1>&2
+
+                # show the array of calls
+                funclevels="$(( ${#FUNCNAME[*]} - 2 ))"
+                funclevel="${funclevels}"
+                echo -en "${el_c_b}calls:${el_c_gr}" 1>&2
+                while [[ $funclevel -gt 0 ]] ; do
+                    echo -en " -> ${FUNCNAME[$funclevel]}" 1>&2
+                    funclevel="$(( $funclevel - 1 ))"
+                done
+                echo -e "${el_c_n}" 1>&2
+            fi
+
+            return 1
+        else
+            if [[ "${EL_DEBUG}" -ge "2" ]] ; then
+                if [[ -z "$recursives_allowed" ]] ; then
+                    echo -e "${el_c_y}W: Detected a possible infinite loop${el_c_n}" 1>&2
+                fi
+
+                # show the array of calls
+                funclevels="$(( ${#FUNCNAME[*]} - 2 ))"
+                funclevel="${funclevels}"
+                echo -en "${el_c_gr}calls:" 1>&2
+                while [[ $funclevel -gt 0 ]] ; do
+                    echo -en " -> ${FUNCNAME[$funclevel]}" 1>&2
+                    funclevel="$(( $funclevel - 1 ))"
+                done
+                echo -e "${el_c_n}" 1>&2
+            fi
+        fi
+    fi
+
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_array_member_check
+#   DESCRIPTION:  check if an element exists in an array
+#    PARAMETERS:  $1 = match, $2 = array (list of words)
+#       RETURNS:  true if found, false if not
+#===============================================================================
+el_array_member_check(){
+    local match list i
+    match="$1"
+    shift
+    list=("$@")
+
+    if [[ -n $ZSH_VERSION ]] ; then
+        for i in "${(P)list[@]}"
+        do
+            [[ -z "$i" ]] && continue
+            if [[ "${list[i]}" = "$match" ]] ; then
+                return 0
+            fi
+        done
+    else
+        for i in "${!list[@]}"
+        do
+            [[ -z "$i" ]] && continue
+            if [[ "${list[i]}" = "$match" ]] ; then
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_array_member_unset
+#   DESCRIPTION:  unset members in an array
+#    PARAMETERS:  $1 = match, $2 = array contents
+#                 XXX needs to be used later with!:  arr=("${_out[@]}")
+#===============================================================================
+el_array_member_unset(){
+    _out=()
+    local i item=$1
+    shift
+
+    for i in "$@"; do
+        [[ -z "$i" ]] && continue
+        if [[ $item != "$i" ]]; then
+            _out+=("$i")
+        fi
+    done
+
+    # note: this is a bit hacky but it works until newer versions of bash, the common alternative is: for i in "${!list_requires_update[@]}"; do [[ ${list_requires_update[i]} = "$package" ]] && unset 'list_requires_update[i]'; done
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_array_member_add
+#   DESCRIPTION:  add a member in the array if not exist
+#    PARAMETERS:  $1 = element, $2 = array contents
+#                 XXX needs to be used later with!:  arr=("${_out[@]}")
+#===============================================================================
+el_array_member_add(){
+    _out=()
+    local i item=$1 match
+    shift
+
+
+    for i in "$@"; do
+        [[ -z "$i" ]] && continue
+        if [[ "$item" = "$i" ]]; then
+            match=1
+        fi
+
+        # add elements to the new array
+        _out+=("$i")
+    done
+
+    if ! ((match)) ; then
+        _out+=("$item")
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_step_requires_fixme
+#   DESCRIPTION:  temporal "step" to put in experimental/development code, only
+#    PARAMETERS:  $1 = dir to login (optional)
+#		  $2 = message (optional)
+#===============================================================================
+el_step_requires_fixme(){
+    # pre {{{
+    local dir prev_dir
+
+    dir="$1"
+    shift
+    message="$1"
+    shift
+
+    prev_dir="$(pwd)"
+
+    : ${dir:="$prev_dir"}
+
+    el_set_display_variables
+
+    # }}}
+    el_check_dirs "${dir}"
+    cd "$dir"
+
+    if ((is_terminal)) ; then
+        echo -e "\n"
+        el_warning "Experimental or uncomplete code:"
+        echo -e "We have set a breakpoint here, report to Elive this message if needed:"
+        echo -e "${FUNCNAME} for $0"
+        echo -e "Function: ${FUNCNAME[1]}  |  Line: $LINENO"
+        if [[ -n "$message" ]] ; then
+            el_explain 0 "message: XX${message}XX"
+            echo -e ""
+        fi
+        echo -e "$(tput setaf 3)$(tput blink)New SHELL Started$(tput op)"
+        el_explain 0 "Type '__exit__' for continue..."
+        $SHELL -l
+    else
+        cd "${prev_dir}"
+        el_set_display_variables
+        local _dummy
+        _dummy="$( eval_gettext "Experimental or incomplete code found, report this if you found it necessary. Exiting..." )"
+        if [[ "${DISPLAY}" = ":0.0" ]] ; then
+            timeout 50 $guitool --warning --text="$( TEXTDOMAIN="elive-tools" eval_gettext "Experimental or incomplete code found, report this if you found it necessary. Exiting..." )"
+        fi
+        exit 1
+    fi
+
+    cd "${prev_dir}"
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_report_to_elive
+#   DESCRIPTION:  function to send easly and painless reports to elive
+#    PARAMETERS:  $1 = message
+#       RETURNS:  -
+#===============================================================================
+el_report_to_elive(){
+    # pre {{{
+    local message message_stripped return_status id eliveversion send_debug_reports send_debug_reports_email execution_stack counter_reports_sent tmp_conf_f limit_reports_amount limit_reports_seconds buf
+    el_security_function_loop || return
+    # max 5 reports per tool
+    limit_reports_amount=5
+    # min 4 hours passed if limit is reached to send more reports
+    limit_reports_seconds=14400
+
+    # TODO: in the future, move to a variable EL_REPORTS instead, if is set, send reports (so we can set it to only our specific things that we want to debug, instead of everything... otherwise this can be a problem for normal users or even myself trying to use el_error for my own things
+    # TODO: or we can instead just call this function in parts of  the code where we want to report things (but will not have fancy colors unless we pass another parameter for 'importancy', so the generator of E: W: etc.. will deal it and put colors)
+    #if ! [[ "$EL_REPORTS" = "yes" ]] ; then
+        #return
+    #fi
+    if [[ -n "$NOREPORTS" ]] || [[ -n "$NOREPORT" ]] || [[ -n "$NO_ELIVETOOLS_REPORTS" ]] ; then
+        return
+    fi
+
+    # never send reports for systems that are not elive, we don't need them at all (and them don't want that too)
+    if ! [[ -s "/etc/elive-version" ]] ; then
+        return
+    fi
+    # same for specific versions of Elive
+    if grep -qs "^special-version:" "/etc/elive-version" ; then
+        return
+    fi
+
+
+    # at least one month old, we can parse the results from the server to show only recent ones too
+    if [[ "$2" != "-f" ]] ; then
+    if el_check_version_development 1>/dev/null 2>&1 ; then
+        # ignore reports for more than X days old
+        # 2 weeks after a beta release should be enough to fix any bugs! (1 week to download version + 1 days of download/misc)
+        if grep -qs "boot=live" /proc/cmdline ; then
+            if ! el_check_version_development_is_days_recent 7 ; then
+                return
+            fi
+        else
+            if ! el_check_version_development_is_days_recent 14 ; then
+                return
+            fi
+        fi
+    else
+        # stable versions will need more time
+        if grep -qs "boot=live" /proc/cmdline ; then
+            if ! el_check_version_is_days_recent 14 ; then
+                return
+            fi
+        else
+            if ! el_check_version_is_days_recent 31 ; then
+                return
+            fi
+        fi
+    fi
+fi
+
+
+    # accept a max number of reports to send {{{
+    counter_reports_sent=0
+
+    el_config_get
+    tmp_conf_f="${HOME}/.config/elive/elive-tools/el_config/${SOURCE//\//%%}_conf.sh"
+
+    # at least 4 hours passed to clean reports counter
+    if [[ -s "$tmp_conf_f" ]] ; then
+        buf="$( echo "$(date +%s) - $( stat -c %Y "$tmp_conf_f" 2>/dev/null )" | LC_ALL="$EL_LC_EN" bc -l | sed -e 's|\..*$||g' )"
+        if [[ -n "$buf" ]] && [[ "$buf" -gt "$limit_reports_seconds" ]] ; then
+            counter_reports_sent=0
+            el_config_save "counter_reports_sent"
+        fi
+
+        if [[ "$counter_reports_sent" -ge "$limit_reports_amount" ]] ; then
+            return
+        fi
+    fi
+
+
+    # }}}
+
+
+    message="$@"
+    # remove special chars like colors, don't depend on colors-remove:
+    message_stripped="$( echo -e "$@" | sed -r -e "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" -e "s/\x0f//g" )"
+
+    if [[ -z "$message" ]] || [[ -z "$message_stripped" ]] ; then
+        return
+    fi
+
+    if [[ -s "/etc/elive/settings" ]] ; then
+        source "/etc/elive/settings" 1>/dev/null 2>&1
+    fi
+    if [[ -s "$HOME/.config/elive/settings" ]] ; then
+        source "$HOME/.config/elive/settings"
+    fi
+
+    # not configured? ask for it
+    if [[ -z "$send_debug_reports" ]] ; then
+
+        # ask for reports
+        if ! grep -qs "boot=live" /proc/cmdline ; then
+            if [[ "${DISPLAY}" = ":0.0" ]] ; then
+                local message_ask_email
+                # note: don't use "'" char in the messages or the functions will fail when using it with ZSH
+                message_ask_email="$( printf "$( eval_gettext "Error found in %s, insert your email if you want to inform about it to Elive so we can fix the bugs automatically. We will only contact you in case it is an important problem on which we need more details." )" "$(basename $0)" )"
+                send_debug_reports_email="$( timeout 240 $guitool --entry --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$message_ask_email" )" )"
+
+                # set conf
+                if echo "$send_debug_reports_email" | grep -qs "@.*\." ; then
+                    send_debug_reports="yes"
+                else
+                    send_debug_reports="no"
+                fi
+
+                # save conf
+                mkdir -p "$HOME/.config/elive"
+                sed -i -e "/send_debug_reports=/d" "$HOME/.config/elive/settings" 2>/dev/null
+                sed -i -e "/send_debug_reports_email=/d" "$HOME/.config/elive/settings" 2>/dev/null
+
+                echo -e "send_debug_reports=\"$send_debug_reports\"" >> "$HOME/.config/elive/settings"
+                echo -e "send_debug_reports_email=\"$send_debug_reports_email\"" >> "$HOME/.config/elive/settings"
+            fi
+        else
+            # don't ask the user for his contact if he's running on live mode
+            send_debug_reports="yes"
+            send_debug_reports_email="Live"
+        fi
+    fi
+
+    # user don't wants to report, so ignore it
+    if [[ "$send_debug_reports" = "no" ]] || [[ -z "$send_debug_reports" ]] ; then
+        return
+    fi
+
+    # protocol 1.0 values (in order):
+    #v_version v_id v_type v_filetype v_topic v_sizeb v_from_name v_from_email v_return_status v_custom v_stack_tree
+
+    # }}}
+    # set values{{{
+    case "$message_stripped" in
+        "E: "*)  return_status=1  ; ;;
+        "W: "*)  return_status=2  ; ;;
+        "I: "*)  return_status=3  ; ;;
+        "D: "*)  return_status=4  ; ;;
+    esac
+
+    # create an unique identifier to differentiate betweem same-reports
+    #id="$( dd if=/dev/urandom bs=1k count=2 2>/dev/null | sha1sum | awk '{print $1}' )"
+    if el_check_sudo_automated ; then
+        id="$( timeout 3 sudo blkid | grep -oP 'UUID="\K[^"]+' | sha256sum | awk '{print $1}' )"
+    else
+        id="$( ip a | grep -E "(link/ether|fe80)" | sha256sum | awk '{print $1}' )"
+    fi
+
+    if [[ -z "$send_debug_reports_email" ]] ; then
+        send_debug_reports_email="anonymous:${id}"
+    fi
+
+
+    eliveversion="$( el_elive_version_get 2>/dev/null )"
+
+    # }}}
+    # send {{{
+    # only report recent things
+    if el_verify_internet fast 1>/dev/null 2>&1 ; then
+        # get stack to senD
+        execution_stack="$( pstree -A -l -n -s $$ )"
+        execution_stack="$( echo "$execution_stack" | sed -e 's|^init---||g' -e 's|^.*lightdm---||g' -e 's|---pstree||g' -e 's|---enlightenment---|---|g' -e 's|---ck-launch-sessi||g' -e's|-+-ck-launch-sessi||g' -e 's|---enlightenment_s||g' -e 's|---e_wrapper---e_wrapper|---e_wrapper|g' -e 's|---el_report_to_elive||g' )"
+
+        # send
+        if ! { echo -e "ELIVE_DATA_TYPE: 1.0::${id}::transfer::text::reports::0::::${send_debug_reports_email}::${return_status}::::${eliveversion}::${SOURCE}::" ; echo -e "$message" ; echo "     stack: $execution_stack" ; } | timeout 4 nc www.elivecd.org 60008 -w 1 1>/dev/null 2>&1 ; then
+            true
+
+            LC_ALL="$EL_LC_EN" sleep 1
+            if ! { echo -e "ELIVE_DATA_TYPE: 1.0::${id}::transfer::text::reports::0::::${send_debug_reports_email}::${return_status}::::${eliveversion}::${SOURCE}::" ; echo -e "$message" ; echo "      stack: $execution_stack" ; } | timeout 8 nc www.elivecd.org 60008 -w 2 1>/dev/null 2>&1 ; then
+                true
+
+                #LC_ALL="$EL_LC_EN" sleep 1
+                #if ! { echo -e "ELIVE_DATA_TYPE: 1.0::${id}::transfer::text::reports::0::::${send_debug_reports_email}::${return_status}::::${eliveversion}::${SOURCE}::" ; echo -e "$message" ; } | timeout 8 nc www.elivecd.org 60008 -w 1 1>/dev/null 2>&1 ; then
+                    #true
+
+                    #LC_ALL="$EL_LC_EN" sleep 1
+                    #if ! { echo -e "ELIVE_DATA_TYPE: 1.0::${id}::transfer::text::reports::0::::${send_debug_reports_email}::${return_status}::::${eliveversion}::${SOURCE}::" ; echo -e "$message" ; } | timeout 8 nc www.elivecd.org 60008 -w 1 1>/dev/null 2>&1 ; then
+                        #true
+                    #fi
+                #fi
+            fi
+        fi
+
+        counter_reports_sent="$(( $counter_reports_sent + 1 ))"
+        el_config_save "counter_reports_sent"
+    fi
+    # }}}
+}
+#===  FUNCTION  ================================================================
+#          NAME:  el_mark_state
+#   DESCRIPTION:  marks states for debug purposes
+#    PARAMETERS:  $1 = id | $1 + $2 = category + action
+#       RETURNS:  -
+#===============================================================================
+el_mark_state(){
+    # pre {{{
+    local id state category action
+    if [[ -n "$2" ]] ; then
+        category="$1"
+        action="$2"
+    else
+        if [[ -n "$1" ]] ; then
+            state="$1"
+        fi
+    fi
+
+    # demo code: this is an example of how to run background processes without annoying debug info, but adding these settings globally will:
+    # Important: this breaks el_confirm in zsh
+    #if [[ -n "$ZSH_VERSION" ]] && ! [[ "$0" = "bash" ]] && ! [[ "$SOURCE" = "$0" ]] ; then
+        #setopt LOCAL_OPTIONS NO_NOTIFY NO_MONITOR
+    #fi
+
+    # }}}
+    # only send with user's permission {{{
+    # get conf
+    if [[ -s "/etc/elive/settings" ]] ; then
+        source "/etc/elive/settings" 1>/dev/null 2>&1
+    fi
+    if [[ -s "$HOME/.config/elive/settings" ]] ; then
+        source "$HOME/.config/elive/settings"
+    fi
+
+    # exit if not wanted
+    if [[ "${send_debug_reports}" != "yes" ]] ; then
+        return
+    fi
+
+    # }}}
+    # parse ids {{{
+    # always run in background to not slow down anything from the tools
+    if [[ -n "$category" ]] && [[ -n "$action" ]] ; then
+        if [[ -n "$ZSH_VERSION" ]] ; then
+            curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org'${SOURCE}'&idsite=2&rec=1&e_c='${category}'&e_a='${action}'"]}' "https://statistics.elivecd.org/piwik.php" 1>/dev/null 2>&1 || true
+        else
+            { curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org'${SOURCE}'&idsite=2&rec=1&e_c='${category}'&e_a='${action}'"]}' "https://statistics.elivecd.org/piwik.php" & disown ; } 1>/dev/null 2>&1 || true
+        fi
+    fi
+
+    if [[ -n "$state" ]] ; then
+        case "$state" in
+            test)
+                id="3"
+                ;;
+            upgraded)
+                id="2"
+                ;;
+            installing)
+                id="5"
+                ;;
+            installed)
+                id="6"
+                ;;
+            noreports)
+                # TODO: remove, temporal tests
+                id="7"
+                ;;
+        esac
+        if [[ -n "$ZSH_VERSION" ]] ; then
+            curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org'${SOURCE}'&idsite=2&rec=1&action_name=track_goal&idgoal='${id}'"]}' "https://statistics.elivecd.org/piwik.php" 1>/dev/null 2>&1 || true
+        else
+            { curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org'${SOURCE}'&idsite=2&rec=1&action_name=track_goal&idgoal='${id}'"]}' "https://statistics.elivecd.org/piwik.php" & disown ; } 1>/dev/null 2>&1 || true
+        fi
+    fi
+
+    if [[ -z "$1" ]] ; then
+        if [[ -n "$ZSH_VERSION" ]] ; then
+            curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org&idsite=2&rec=1"]}' "https://statistics.elivecd.org/piwik.php" 1>/dev/null 2>&1 || true
+        else
+            { curl -m 10 -L -i -X POST -d '{"requests":["?url=https://www.elivecd.org&idsite=2&rec=1"]}' "https://statistics.elivecd.org/piwik.php" & disown ; } 1>/dev/null 2>&1 || true
+        fi
+    fi
+    # - parse ids }}}
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_flag
+#   DESCRIPTION:  control states with marks and locks
+#    PARAMETERS:  $2 = action (add|del|check), $3 = name
+#       RETURNS:  true or false for check actions
+#===============================================================================
+el_flag(){
+    # pre {{{
+    local action name
+    el_security_function_loop || return
+
+    action="${1}"
+    name="${2}"
+
+    #el_debug "$action - $name"
+
+    TMP_FLAGS_d="${TMP_FLAGS_d:-"/tmp/.$(basename $0)-flags-$USER"}"
+
+    # always create dir, flush FS's problems
+    mkdir -p "$TMP_FLAGS_d"
+
+    el_check_variables "action,name"
+
+    # }}}
+    case $action in
+        add|set|put)
+            el_explain 2 "added $name flag"
+            touch "${TMP_FLAGS_d}/$name"
+            ;;
+        del|remove|delete|rm)
+            rm -f "${TMP_FLAGS_d}/$name"
+
+            if ! el_check_dir_has_files "${TMP_FLAGS_d}" 2>/dev/null ; then
+                rmdir "${TMP_FLAGS_d}" 2>/dev/null || true
+            fi
+            el_debug "removed flag $name"
+            ;;
+        check|test|verify)
+            if [[ -e "${TMP_FLAGS_d}/$name" ]]; then
+                el_debug "$action $name -> [flag found]"
+                return 0
+            else
+                el_debug "$action $name -> [no flag]"
+                return 1
+            fi
+            ;;
+        *)
+            el_error "unkown action ${action}, func: ${FUNCNAME[1]}"
+            ;;
+    esac
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_add_on_exit
+#   DESCRIPTION:  add commands that will be run on exit of the application
+#    PARAMETERS:  command to run
+#       RETURNS:  -
+#===============================================================================
+el_add_on_exit(){
+    if [[ -z "$1" ]] ; then
+        return
+    fi
+    local n=${#on_exit_items[*]}
+    on_exit_items[$n]="$*"
+
+    # add the trap if is not added
+    if [[ $n -eq 0 ]]; then
+        #echo "Setting trap"
+        trap on_exit EXIT
+    fi
+}
+on_exit(){
+    local i
+    # create empty variable of array type if not exist
+    if [[ -z "$on_exit_items" ]] ; then
+        declare -a on_exit_items
+    fi
+
+    # run each appended command
+    for i in "${on_exit_items[@]}"
+    do
+        #echo "on_exit: $i"
+        eval $i
+    done
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_request_report_bug
+#   DESCRIPTION:  Request the user to report a bug
+#    PARAMETERS:  Message to tell to the user (optional)
+#       RETURNS:  -
+#===============================================================================
+el_request_report_bug(){
+    # pre {{{
+    local message url
+    el_debug
+    el_security_function_loop || return
+
+    message="$@"
+    el_check_variables "message"
+
+    el_set_display_variables
+
+    # set colors for our reports
+    local el_c_n el_c_r el_c_r2 el_c_g el_c_g2 el_c_y el_c_y2 el_c_m el_c_m2 el_c_c el_c_c2 el_c_b el_c_b2
+    el_c_n="\033[0;39m" # Normal color  (orig: normal)
+    el_c_r="\033[1;31m" # Red color  (orig: red)
+    el_c_r2="\033[0;31m" # Red2 color  (orig: red)
+    el_c_g="\033[1;32m" # Green color  (orig: green)
+    el_c_g2="\033[0;32m" # Green2 color  (orig. green2)
+    el_c_y="\033[1;33m" # Yellow color  (orig. yellow)
+    el_c_y2="\033[0;33m" # Yellow2 color  (orig. yellow)
+    el_c_m="\033[1;35m" # Magenta color
+    el_c_m2="\033[0;35m" # Magenta2 color
+    el_c_c="\033[1;36m" # Cyan color
+    el_c_c2="\033[0;36m" # Cyan2 color
+    el_c_b="\033[1;34m" # Blue color
+    el_c_b2="\033[0;34m" # Blue2 color
+
+
+    # }}}
+    # use el_report_to_elive {{{
+    local execution_stack
+    execution_stack="$( pstree -A -l -n -s $$ )"
+    execution_stack="$( echo "$execution_stack" | sed -e 's|^init---||g' -e 's|^.*lightdm---||g' -e 's|---pstree||g' -e 's|---enlightenment---|---|g' -e 's|---ck-launch-sessi||g' -e's|-+-ck-launch-sessi||g' -e 's|---enlightenment_s||g' -e 's|---e_wrapper---e_wrapper|---e_wrapper|g' -e 's|---el_report_to_elive||g' )"
+    el_report_to_elive "${el_c_y2}W: ${el_c_gr}[ ${sourcenames} +${el_c_c2}${BASH_LINENO} ${el_c_gr}${funcnames} (${execution_stack})] ${el_c_r}$message${el_c_n}"
+
+    # - use el_report_to_elive }}}
+    # we don't need anything more since the new tool # TODO: remove old code
+    return
+
+    # task list sorted by created time
+    #url='http://bugs.elivecd.org/index.php?do=index&project=2&project=2&do=index&order=dateopened&sort=desc'
+    ## check if we should ignore this function
+    ##if el_check_version_development_is_days_recent 30 ; then
+    ## TODO: set 10 only for now, change it to 30 when migrating from NOREPORTS to EL_REPORTS=yes
+    #if el_check_version_development_is_days_recent 15 ; then
+
+        #if [[ "${DISPLAY}" = ":0.0" ]] ; then
+            #local _dummy
+            #_dummy="$( printf "$( eval_gettext "We found something that we want to be informed about its details, it may be a problem in Elive or a simple state that we want to know, since it happened to you it can happen to anybody and we want to make Elive as much stable as possible, please take 1 minute to report this message to our developers:<b>\n\n%s\n\n(file: %s, function: %s, line: %s)</b>\n\nCan you please send us now about your recent problem found ?" )" "$message" "${BASH_SOURCE[1]}" "${FUNCNAME[1]}" "$BASH_LINENO" )"
+
+            #local message_report_bug
+            #message_report_bug="$( printf "$( TEXTDOMAIN="elive-tools" eval_gettext "We found something that we want to be informed about its details, it may be a problem in Elive or a simple state that we want to know, since it happened to you it can happen to anybody and we want to make Elive as much stable as possible, please take 1 minute to report this message to our developers:<b>\n\n%s\n\n(file: %s, function: %s, line: %s)</b>\n\nCan you please send us now about your recent problem found ?" )" "$message" "${BASH_SOURCE[1]}" "${FUNCNAME[1]}" "$BASH_LINENO" )"
+
+            #if $guitool --question --text="$message_report_bug" ; then
+                #if [[ -x /usr/bin/firefox ]] ; then
+                    #firefox "$url" &
+                #fi
+                #if [[ -x /usr/bin/iceweasel ]] ; then
+                    #iceweasel "$url" &
+                #fi
+                ## use web-launcher TODO
+                #if [[ -x /usr/bin/chromium ]] ; then
+                    #chromium --temp-profile "$url" &
+                #fi
+
+                ## explain some details while reporting it
+                #local _dummy
+                #_dummy="$( eval_gettext "Make sure that the report doesn't already exist first, then click where it says to add a new task. You must be registered for create a task first. Close this dialog when you have finished. Thank you." )"
+                #local message_instructions
+                #message_instructions="$( TEXTDOMAIN="elive-tools" eval_gettext "Make sure that the report doesn't already exist first, then click where it says to add a new task. You must be registered for create a task first. Close this dialog when you have finished. Thank you." )"
+                #sleep 6
+                #timeout 240 $guitool --info --text="$message_instructions" || true
+
+            #fi
+        #else
+            #el_warning "$message_report_bug --> http://bugs.elivecd.org"
+        #fi
+    #fi
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_processes_using_mountpoint
+#   DESCRIPTION:  show the name of the processes that is using a mountpoint
+#    PARAMETERS:  $1 mountpoint-dir, $2 mode [kill]
+#       RETURNS:  -
+#===============================================================================
+el_processes_using_mountpoint(){
+    # pre {{{
+    local dir mode pid commands pids_mountpoint
+    el_debug
+    el_security_function_loop || return
+
+    dir="$1"
+    mode="$2"
+
+    el_check_variables "dir"
+    #el_check_dirs "$dir"
+
+    # get mountpoint if is a device
+    if [[ -b "$dir" ]] ; then
+        if mounts-manager --check-is-mounted "$dir" 2>/dev/null 1>&2 ; then
+            dir="$( mounts-manager --get-mountpoint "$dir" 2>/dev/null )"
+        fi
+    fi
+
+    # check
+    if [[ -b "$dir" ]] ; then
+        el_error "$dir is not a directory but a block device, try to use mounts-manager --get-mountpoint"
+        return 1
+    fi
+
+    if ! [[ -d "$dir" ]] ; then
+        el_error "$dir must be a directory"
+        return 1
+    fi
+
+    # }}}
+
+    for pid in $( fuser -m "$dir" 2>/dev/null | tr ' ' '\n' | grep -v "$dir" | grep -v "$$" )
+    do
+        pid="${pid//[^[:digit:]]}"
+        commands="$( ps axo pid,comm 2>/dev/null | awk -v pid="$pid" '{if ($1 == pid) { $1="" ; print $0 }}' | sed 's| $||g' )"
+        if [[ -n "$commands" ]] ; then
+            echo "Mountpoint busy by process $pid: $commands"
+            el_array_member_add "$pid" "${pids_mountpoint[@]}" ; pids_mountpoint=("${_out[@]}")
+        fi
+    done
+
+    if [[ "${mode}" = "kill" ]] ; then
+        el_debug "Killing processes in reverse mode until the mountpoints is freed"
+        # reverse loop of array
+        for (( pid=${#pids_mountpoint[@]}-1 ; pid>=0 ; pid-- ))
+        do
+            el_debug "Killing process: ${pids_mountpoint[pid]}"
+            kill "${pids_mountpoint[pid]}" 2>/dev/null
+            kill -9 "${pids_mountpoint[pid]}" 2>/dev/null
+            sleep 1
+        done
+    fi
+
+    unset pids_mountpoint
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_user_email_get
+#   DESCRIPTION:  determine which is the email of the user and return it
+#       RETURNS:  email string
+#===============================================================================
+el_user_email_get(){
+    # pre {{{
+    local user_email
+
+    # }}}
+
+    # user has configured it for elive
+    user_email="$( grep "^email_acount=" "$HOME/.config/email-sender" 2>/dev/null | sed -e 's|^.*="||g' -e 's|".*$||g' | grep "@" | tail -1 )"
+
+    # get the email from his git/github account
+    if ! echo "$user_email" | grep -qs "[[:alpha:]]" ; then
+        user_email="$( git config --get user.email 2>/dev/null | grep "@" | tail -1 )"
+    fi
+
+    if echo "$user_email" | grep -qs "[[:alpha:]]" ; then
+        echo "$user_email"
+    else
+        el_error "unable to get user's email"
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_request_donation
+#   DESCRIPTION:  ask to the user to make a donation to elive
+#    PARAMETERS:  -
+#       RETURNS:  -
+#===============================================================================
+el_request_donation(){
+    # pre {{{
+    local arg
+
+    if ! [[ "${DISPLAY}" = ":0.0" ]] ; then
+        return
+    fi
+
+    # }}}
+
+    local _dummy
+    _dummy="$( eval_gettext "Elive enjoys making the life of the users more easy with unique features and helpers. But Elive is a non-commercial project that only survives by a few donations." )"
+    local _dummy2
+    _dummy2="$( eval_gettext "Do you want to donate to Elive so that we can keep it alive and always improving?" )"
+
+    local _dummy3
+    _dummy3="$( eval_gettext "To make a donation only takes you one or two minutes and it guarantees that there will be more versions of Elive in the future and more improved!" )"
+
+    # show it
+    #$guitool --info --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$_dummy" )" || true
+    if $guitool --question --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$_dummy $_dummy2" )" ; then
+        /etc/alternatives/x-www-browser "https://www.elivecd.org/donate" &
+    else
+        if $guitool --question --text="$( TEXTDOMAIN="elive-tools" eval_gettext "$_dummy $_dummy3" )" ; then
+            /etc/alternatives/x-www-browser "https://www.elivecd.org/donate" &
+        fi
+    fi
+
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_config_get
+#   DESCRIPTION:  gets all the previously saved configurations for the $0 tool
+#    PARAMETERS:  -
+#                 to force conf file: prepend the variable SOURCE ($0) to the function call
+#       RETURNS:  sources the file configuration, so it gets the variables
+#          NOTE:  this tool cannot work with array variables
+#===============================================================================
+el_config_get(){
+    # pre {{{
+    local tmp_conf_f
+    #tmp_conf_f="/tmp/.$(basename $0)_${USER}_configs.sh"
+    tmp_conf_f="${HOME}/.config/elive/elive-tools/el_config/${SOURCE//\//%%}_conf.sh"
+
+    # }}}
+    # checks {{{
+    if el_check_is_shell ; then
+        el_debug "ignoring el_config_* because we are from a shell"
+        return
+    fi
+    # variable must be set
+    if [[ -z "${SOURCE}" ]] ; then
+        el_debug "\$0 (source tool) should be set to access to its conf ID"
+        return
+    fi
+
+    # }}}
+    if [[ -s "$tmp_conf_f" ]] ; then
+        source "$tmp_conf_f" 1>/dev/null 2>&1
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_config_save
+#   DESCRIPTION:  saves a configuration to re-use if we run again the installer
+#                 works with bash and zsh, but the SOURCE var needs to be set in main script
+#    PARAMETERS:  varname (not value), multiple-ones allowed (space separated)
+#                 to force conf file: prepend the variable SOURCE ($0) to the function call
+#       RETURNS:  -
+#===============================================================================
+el_config_save(){
+    # pre {{{
+    local entry
+    # note: by some reason this needs to be alone and first or may not work:
+
+    # checks {{{
+    if el_check_is_shell ; then
+        el_debug "ignoring el_config_* because we are from a shell"
+        return
+    fi
+    # variable must be set
+    if [[ -z "${SOURCE}" ]] ; then
+        el_debug "\$0 (source tool) should be set to access to its conf ID"
+        return
+    fi
+
+    # }}}
+
+    local tmp_conf_f
+    #tmp_conf_f="/tmp/.$(basename $0)_${USER}_configs.sh"
+    tmp_conf_f="${HOME}/.config/elive/elive-tools/el_config/${SOURCE//\//%%}_conf.sh"
+
+    if [[ -z "$@" ]] ; then
+        el_warning "$FUNCNAME called without parameter, (name of variable to save). by ${FUNCNAME[1]}"
+        return
+    fi
+
+    if ! declare -p "$@" 1>/dev/null 2>&1 ; then
+        el_warning "$FUNCNAME called with a wrong parameter (empty varilable?), use only the name of variable to save. by ${FUNCNAME[1]}"
+        return
+    fi
+
+    # create conf file
+    if ! [[ -s "$tmp_conf_f" ]] ; then
+        mkdir -p "$( dirname "$tmp_conf_f" )"
+
+        touch "$tmp_conf_f"
+    fi
+
+    # }}}
+    # remove old possible entries
+    for entry in "$@"
+    do
+        # bash entries
+        sed -i "/^${entry}=/d" "$tmp_conf_f"
+        sed -i "/^declare.* ${entry}=/d" "$tmp_conf_f"
+        # zsh entries
+        sed -i "/^typeset.* ${entry}=/d" "$tmp_conf_f"
+        sed -i "/^typeset.* ${entry}$/d" "$tmp_conf_f"
+        #el_debug "deleted old conf: $entry"
+    done
+
+    if [[ "$( declare -p "$@" | wc -l )" -gt 1 ]] ; then
+        el_warning "saving variables with more than one line give problems, dont use it in your code or improve the function: $@"
+    fi
+
+    # append configuration, and save the variable as global so it can work outside this function
+    declare -p "$@" | sed -e 's|declare\s--|declare -|g' -e 's|declare -|declare -g|g' | awk '{$2 = $2" --"; print $0}' >> "$tmp_conf_f"
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  el_config_restart
+#   DESCRIPTION:  remove all configurations
+#    PARAMETERS:  -
+#       RETURNS:  -
+#===============================================================================
+el_config_restart(){
+    # pre {{{
+    local tmp_conf_f
+
+    tmp_conf_f="${HOME}/.config/elive/elive-tools/el_config/${SOURCE//\//%%}_conf.sh"
+
+    # }}}
+    # checks {{{
+    if el_check_is_shell ; then
+        el_debug "ignoring el_config_* because we are from a shell"
+        return
+    fi
+    # variable must be set
+    if [[ -z "${SOURCE}" ]] ; then
+        el_error "\$0 is not set"
+        return
+    fi
+
+    # }}}
+    if [[ -s "$tmp_conf_f" ]] ; then
+        rm -f "$tmp_conf_f"
+    fi
+}
+
+
+
+###################################################################
+#  Always run:
+###################################################################
+# Generic checks
+if [[ "${EL_DEBUG}" -ge "2" ]] ; then
+    if [[ "$0" != *"bash" ]] && [[ "$0" != *"bin/zsh" ]] && [[ -e "$@" ]] && grep -q el_step_requires_fixme "$0" ; then
+        el_warning "Missing features, report this to Elive"
+    fi
+fi
+
+
+
+
+
+# FIXME: implement:
+#
+# - check same proceses
+# - el_fixme_required -> report to the user that the feature is not implemented by some future userfriendly way
+# - arrays ?
+# - run web
+# - trap signals (exit statuses, etc)
+#EXAMPLES (of correct managing of traps):
+    #set -E  # inherit errors to parent, good for deep traping, suggested
+    #trap "error_signal_debug" ERR  # the ERR traps any error, so "ls idontexist" would send this signal too, which is not suggested to have in the exit_error function, but at least good for a debug purpose and know that something failed somewhere
+    #trap "exit_error" 1 2 3 6 9 11 13 14 15
+    #trap "exit_ok" 0 EXIT
+    #el_add_on_exit exit_ok  # or you can use this feature, so it calls commands when something is finished, good to add "rm thisfile" everywhere arounds the code
+    #error_signal_debug(){
+        #_trapped="$?"
+        #if [[ -n "$_trapped" ]] ; then
+            #el_warning "trapped signal: '${_trapped}' from '${FUNCNAME[1]}' in lines '${BASH_LINENO[*]}'"
+        #fi
+    #}
+    #exit_error(){
+        #_trapped="$?"
+        #cleanups
+        #exit $_trapped
+    #}
+    #exit_ok(){
+        #echo "good bye"
+    #}
+# - report, something for inform the user about something important, which interfaces and cases ?
+# -
+# -
+# -
+# -
+# -
+# -
+
+
+# vim: set foldmethod=marker filetype=sh :
+
