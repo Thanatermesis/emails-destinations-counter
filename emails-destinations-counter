@@ -4,6 +4,8 @@
 # CONFIGURATION:
 servers="filter1 filter2 filter3 filter4 ofilter1 ofilter2"
 notify_when_results="yes" # show a notification to the user in terminal (that depends of the terminal type, but is somewhat a standard)
+limit_value_domain_warning="50"
+limit_value_domain_error="100"
 #####################
 
 
@@ -127,6 +129,17 @@ main(){
     if ((is_results_shown)) && [[ "$notify_when_results" = "yes" ]] ; then
         echo -ne "\a"
     fi
+
+    # notify with a bigger visual for limits
+    max_counted="$( echo "$results_counted" | awk '{print $1}' | tail -1 )"
+    if [[ "$max_counted" -ge "$limit_value_domain_error" ]] ; then
+        el_error "Limit reached"
+    else
+        if [[ "$max_counted" -ge "$limit_value_domain_warning" ]] ; then
+            el_warning "Limit reached"
+        fi
+    fi
+
 
 }
 
