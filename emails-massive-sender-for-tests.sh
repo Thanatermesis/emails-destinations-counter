@@ -15,12 +15,12 @@ mailx_send(){
     subject="$1"
     shift
 
-    if [[ -x "$(which heirloom-mailx)" ]] ; then
+    if [[ -x "$(which heirloom-mailx 2>/dev/null )" ]] ; then
         echo "$@" | heirloom-mailx \
             -r "no-reply@$(hostname)" \
             -s "$subject" "$to"
     else
-        echo "$@" | mailx -e -s "$subject" -a "Content-Type: text/plain; charset=UTF-8" -a "Content-Transfer-Encoding: 8bit" "$to"
+        echo "$@" | mailx -s "$subject" "$to"
     fi
 }
 
