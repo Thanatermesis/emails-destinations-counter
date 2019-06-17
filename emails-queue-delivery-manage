@@ -1,0 +1,78 @@
+#!/bin/bash
+
+#################################################
+# CONFIGURATION:
+# Tests mode: change to yes to run it in tests mode (sending emails to tests_email_receiver instead of the original from: value)
+mode_tests="no"
+queue_dir="/etc/haraka/queue"
+# tests mode confs:
+#tests_email_receiver="me@tests.com"
+#################################################
+
+#if [[ "$mode_tests" = "yes" ]] ; then
+#fi
+
+# Lock system {{{
+lockfile="/tmp/.$(basename $0)-${USER}.lock"
+
+exit_ok(){
+    rm -f "$lockfile"
+    #rm -f dump
+}
+exit_error(){
+    rm -f "$lockfile"
+    #rm -f dump
+}
+
+if [[ -r "$lockfile" ]] ; then
+    PROCCESS="$(cat $lockfile)"
+else
+    PROCCESS=" "
+fi
+if (ps up $PROCCESS) 1>/dev/null 2>&1 ; then
+    echo -e "E: $(basename $0) already running\a" 1>&2
+    exit
+else
+    echo $$ > "$lockfile"
+fi
+
+# traps needs to be after the lock verification, in order to not remove it when we are already running
+trap "exit_ok" EXIT
+trap "exit_error" 1 3 5 6 14 15 ERR TERM
+
+# SET the lock file
+echo "$$" > "$lockfile"
+
+
+# end lock system }}}
+
+main(){
+    # pre {{{
+    [[ -z $HOME ]] && export HOME="/home/$(id -un)"
+    [[ -z $USER ]] && export USER="$(id -un)"
+
+    # elive functions
+    if [[ -e "/usr/lib/elive-tools/functions" ]] ; then
+        source /usr/lib/elive-tools/functions
+    else
+        if [[ -e "./elive-functions" ]] ; then
+            source "./elive-functions"
+        else
+            echo -e "E: You must have elive functions available to use this tool, a copy of the '/usr/lib/elive-tools/functions' file in the same place of this tool called 'elive-functions'. Aborting..."
+            exit 1
+        fi
+    fi
+    export NOREPORTS=1
+
+
+    # }}}
+
+
+}
+
+#
+#  MAIN
+#
+main "$@"
+
+# vim: set foldmethod=marker :
