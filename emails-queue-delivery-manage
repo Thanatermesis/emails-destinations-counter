@@ -3,14 +3,14 @@
 #################################################
 # CONFIGURATION:
 # Tests mode: change to yes to run it in tests mode (sending emails to tests_email_receiver instead of the original from: value)
-mode_tests="no"
-queue_dir="/etc/haraka/queue"
+mode_tests="yes"
+#queue_dir="/etc/haraka/queue"
+queue_dir="/tmp/emails-test" # FIXME: deleteme
 # tests mode confs:
-#tests_email_receiver="me@tests.com"
+tests_email_receiver="thanatermesis.elive@gmail.com"
+subject_prepend_undelivery="UNDELIVERED ->"
+subject_prepend_queued="NOTIFICATION: Your has not been delivered yet ->"
 #################################################
-
-#if [[ "$mode_tests" = "yes" ]] ; then
-#fi
 
 # Lock system {{{
 lockfile="/tmp/.$(basename $0)-${USER}.lock"
@@ -46,10 +46,103 @@ echo "$$" > "$lockfile"
 
 # end lock system }}}
 
+notify_sender(){
+    # pre {{{
+    local status to subject file contents
+    status="$1"
+    shift
+    to="$1"
+    shift
+    subject="$1"
+    shift
+    file="$1"
+    shift
+
+    contents="${tool_dir}/tmp_contents_email"
+
+    if [[ "$mode_tests" = "yes" ]] ; then
+        to="$tests_email_receiver"
+    fi
+    # }}}
+
+    if notify_database "check" "$status" "$file" ; then
+        el_info "already notified sender '$to' for '$status' of email '$subject' ($file) "
+    else
+        case "$status" in
+            undelivered)
+                subject="${subject_prepend_undelivery} (${subject})"
+                el_error "undelivered email by '$to' with subject '$subject' ($file)"
+                ;;
+            queued)
+                subject="${subject_prepend_queued} (${subject})"
+                el_warning "queued email by '$to' with subject '$subject' ($file)"
+                ;;
+        esac
+
+        # send
+        cat "$file" | sed '1d' > "$contents"
+        /usr/sbin/sendmail -i -- "$to" < "$contents"
+        rm -f "$contents"
+
+        # save controls
+        notify_database "save" "$status" "$file"
+    fi
+}
+
+
+notify_database(){
+    local mode status file checksum buf
+    mode="$1"
+    shift
+    status="$1"
+    shift
+    file="$1"
+    shift
+
+    if [[ -s "$file" ]] ; then
+        checksum="$( sha1sum "$file" | awk '{print $1}' )"
+    fi
+
+    case "$mode" in
+        check)
+            [[ -z "$checksum" ]] && return 1
+            if grep -aqs "^${checksum}:::.*:::.*:::${status}$" "$controls" ; then
+                el_debug "already processed: '$status' for '$file'"
+                return 0
+            else
+                el_debug "not processed yet: '$status' for '$file'"
+                return 1
+            fi
+            ;;
+        save)
+            [[ -z "$checksum" ]] && return 1
+            if ! "$FUNCNAME" check "$status" "$file" ; then
+                el_debug "saved status '$status' for '$file' in controls"
+                echo -e "${checksum}:::${file}:::$(date +%s):::${status}" >> "$controls"
+                $FUNCNAME "maintenance"
+            fi
+            ;;
+        maintenance)
+            # save always only the last 10000 entries:
+            buf="$( tail -n 10000 "$controls" )"
+            echo "$buf" > "$controls"
+            ;;
+    esac
+}
+
 main(){
     # pre {{{
     [[ -z $HOME ]] && export HOME="/home/$(id -un)"
     [[ -z $USER ]] && export USER="$(id -un)"
+
+    tool_dir="$HOME/.local/share/$(basename $0)"
+    controls="${tool_dir}/controls_emails_processed"
+
+    if ! [[ -d "$tool_dir" ]] ; then
+        mkdir -p "$tool_dir"
+        touch "$controls"
+    fi
+    cd "$tool_dir"
 
     # elive functions
     if [[ -e "/usr/lib/elive-tools/functions" ]] ; then
@@ -58,15 +151,85 @@ main(){
         if [[ -e "./elive-functions" ]] ; then
             source "./elive-functions"
         else
-            echo -e "E: You must have elive functions available to use this tool, a copy of the '/usr/lib/elive-tools/functions' file in the same place of this tool called 'elive-functions'. Aborting..."
-            exit 1
+            # download functions
+            if wget "https://raw.githubusercontent.com/Elive/elive-tools/master/usr/lib/elive-tools/functions" -o elive-functions ; then
+                source "./elive-functions"
+            else
+                echo -e "E: You must have elive functions available to use this tool, a copy of the '/usr/lib/elive-tools/functions' file in the same place of this tool called 'elive-functions'. Aborting..."
+                exit 1
+            fi
         fi
     fi
     export NOREPORTS=1
 
+    echo -e "Starting $(basename $0):"
+    echo -e "processed emails located at: $controls"
+    echo -e ""
+
 
     # }}}
 
+    for queued in "$queue_dir"/*
+    do
+        [[ -s "$queued" ]] || continue
+        el_debug "processing $queued :"
+
+        # ignored types:
+        if grep -qsiE "(^Received:.*invoked for bounce|^Subject: failure notice)" "$queued" ; then
+            el_debug "ignoring '$queued' because is an invalid type"
+            continue
+        fi
+
+        # get From:
+        from="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(from):" | grep -viE "(from): <>" | sed -e 's|^from:||g' -e 's|^From:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
+        if [[ "$( echo "$from" | wc -l )" -gt 1 ]] ; then
+            el_warning "the queued file '$queued' contains multiple 'From:' entries, please inspect it to know how it should be dealt. Ignoring it..."
+            continue
+        fi
+
+        # get Subject:
+        #subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' | sed -e 's@+@ @g;s@%@\\x@g' | xargs -0 printf "%b" )"
+        subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
+        #subject="$( echo "$subject" | sed -e 's|=|%|g' )"
+        #subject=$(printf '%b' "${subject//%/\\x}")
+
+        if [[ "$( echo "$from" | wc -l )" -gt 1 ]] ; then
+            el_warning "the queued file '$queued' contains multiple 'Subject:' entries, please inspect it to know how it should be dealt. Ignoring it..."
+            continue
+        fi
+
+        # get timestamp
+        timestamp="$( head -n 4 "$queued" | tr -d '\r' | tr -dc '\0-\177' | tr ',' '\n' | grep -a "queue_time\":" | sed -e 's|^.*queue_time":||g' -e 's|".*$||g' -e 's| .*$||g' )"
+        timestamp="${timestamp:0:10}"
+        #timestamp="$( head -n 2 "$queued" | tr -d '\r' | tr ',' '\n' | sed -e 's|^.*queue_time":|queue_time":|g'  )"
+
+        # verify values
+        if [[ -z "$timestamp" ]] || [[ -z "$from" ]] ; then
+            el_debug "ignoring '$queued' because lacks needed values"
+            continue
+        fi
+
+
+        timestamp_now="$(date +%s)"
+
+        # check if more than 4 days passed
+        if [[ "$timestamp" -lt "$(( $timestamp_now - 345600 ))" ]] ; then
+            #echo "YES + 4 days : $queued"
+            notify_sender "undelivered" "$from" "$subject" "$queued"
+        else
+            # check if more than 4 hours passed
+            if [[ "$timestamp" -lt "$(( $timestamp_now - 14400 ))" ]] ; then
+                #echo "YES + 4 hours : $queued"
+                notify_sender "queued" "$from" "$subject" "$queued"
+            #else
+                #echo "NO + 4 hours : $queued"
+            fi
+            #echo "NO + 4 days : $queued"
+        fi
+
+        # XXX to send email we need to remove the first header
+
+    done
 
 }
 
