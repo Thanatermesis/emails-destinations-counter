@@ -194,7 +194,7 @@ main(){
         el_debug "processing $queued :"
 
         # ignored types:
-        if grep -qsiE "(^Received:.*invoked for bounce|^Subject: failure notice)" "$queued" ; then
+        if grep -aqsiE "(^Received:.*invoked for bounce|^Subject: failure notice)" "$queued" ; then
             el_debug "ignoring '$queued' because is an invalid type"
             continue
         fi
