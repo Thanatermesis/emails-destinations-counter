@@ -2,14 +2,17 @@
 
 #################################################
 # CONFIGURATION:
+
 # Tests mode: change to yes to run it in tests mode (sending emails to tests_email_receiver instead of the original from: value)
 mode_tests="yes"
-#queue_dir="/etc/haraka/queue"
-queue_dir="/tmp/emails-test" # FIXME: deleteme
-# tests mode confs:
-tests_email_receiver="thanatermesis.elive@gmail.com"
+# where to send all the emails when we are in mode tests:
+#tests_email_receiver=""
+
+# directory where are the queued emails
+queue_dir="/etc/haraka/queue"
+# subjects to replace for the sending notifications:
 subject_prepend_undelivery="UNDELIVERED ->"
-subject_prepend_queued="NOTIFICATION: Your has not been delivered yet ->"
+subject_prepend_queued="NOTIFICATION: Your email has not been delivered yet ->"
 #################################################
 
 # Lock system {{{
@@ -18,6 +21,10 @@ lockfile="/tmp/.$(basename $0)-${USER}.lock"
 exit_ok(){
     rm -f "$lockfile"
     #rm -f dump
+    if [[ "$mode_tests" = "yes" ]] ; then
+        echo -e "\n" 1>&2
+        el_warning "since you are in tests mode, you may want to remove the database of controls: $controls"
+    fi
 }
 exit_error(){
     rm -f "$lockfile"
@@ -60,9 +67,6 @@ notify_sender(){
 
     contents="${tool_dir}/tmp_contents_email"
 
-    if [[ "$mode_tests" = "yes" ]] ; then
-        to="$tests_email_receiver"
-    fi
     # }}}
 
     if notify_database "check" "$status" "$file" ; then
@@ -79,8 +83,18 @@ notify_sender(){
                 ;;
         esac
 
+        # prepare email to send
+        cat "$file" | tr -d '\r' | sed '1d' > "$contents"
+        sed -i "s|^Subject:.*|Subject: ${subject}|g" "$contents"
+        sed -i "s|^subject:.*|subject: ${subject}|g" "$contents"
+        # from
+        sed -i "/^From:/s|From:.* <|From: \"[Auto Notification]\" <|g" "$contents"
+
+        if [[ "$mode_tests" = "yes" ]] ; then
+            to="$tests_email_receiver"
+        fi
+
         # send
-        cat "$file" | sed '1d' > "$contents"
         /usr/sbin/sendmail -i -- "$to" < "$contents"
         rm -f "$contents"
 
@@ -162,6 +176,11 @@ main(){
     fi
     export NOREPORTS=1
 
+    if [[ "$mode_tests" = "yes" ]] && [[ -z "$tests_email_receiver" ]] ; then
+        el_error "you are in 'mode_tests', you need to set the variable 'tests_email_receiver' to an email where to receive the testing results"
+        exit 1
+    fi
+
     echo -e "Starting $(basename $0):"
     echo -e "processed emails located at: $controls"
     echo -e ""
@@ -188,10 +207,13 @@ main(){
         fi
 
         # get Subject:
-        #subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' | sed -e 's@+@ @g;s@%@\\x@g' | xargs -0 printf "%b" )"
         subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
-        #subject="$( echo "$subject" | sed -e 's|=|%|g' )"
-        #subject=$(printf '%b' "${subject//%/\\x}")
+        #subject="$( echo "$subject" | sed -e 's|=|%|g' | perl -p -e 'use URI::Escape;s{([^/]+)}{uri_unescape($1)}ge' | sed -e 's|^.*Windows-.*?Q?||g' -e 's|?%$||g' )"
+        subject="$( echo "$subject" | sed -e 's|=|%|g' | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS='%..' | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
+        if [[ -z "$subject" ]] ; then
+            # just use the original subject if failed to convert:
+            subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
+        fi
 
         if [[ "$( echo "$from" | wc -l )" -gt 1 ]] ; then
             el_warning "the queued file '$queued' contains multiple 'Subject:' entries, please inspect it to know how it should be dealt. Ignoring it..."
@@ -226,8 +248,6 @@ main(){
             fi
             #echo "NO + 4 days : $queued"
         fi
-
-        # XXX to send email we need to remove the first header
 
     done
 
