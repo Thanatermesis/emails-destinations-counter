@@ -146,6 +146,7 @@ notify_database(){
 
 main(){
     # pre {{{
+    export NOREPORTS=1
     [[ -z $HOME ]] && export HOME="/home/$(id -un)"
     [[ -z $USER ]] && export USER="$(id -un)"
 
