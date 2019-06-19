@@ -6,7 +6,7 @@
 # Tests mode: change to yes to run it in tests mode (sending emails to tests_email_receiver instead of the original from: value)
 mode_tests="yes"
 # where to send all the emails when we are in mode tests:
-#tests_email_receiver=""
+tests_email_receiver=""
 
 # directory where are the queued emails
 queue_dir="/etc/haraka/queue"
