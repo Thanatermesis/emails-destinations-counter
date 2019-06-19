@@ -22,7 +22,6 @@ exit_ok(){
     rm -f "$lockfile"
     #rm -f dump
     if [[ "$mode_tests" = "yes" ]] ; then
-        echo -e "\n" 1>&2
         el_warning "since you are in tests mode, you may want to remove the database of controls: $controls"
     fi
 }
