@@ -210,7 +210,7 @@ main(){
         # get Subject:
         subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
         #subject="$( echo "$subject" | sed -e 's|=|%|g' | perl -p -e 'use URI::Escape;s{([^/]+)}{uri_unescape($1)}ge' | sed -e 's|^.*Windows-.*?Q?||g' -e 's|?%$||g' )"
-        subject="$( echo "$subject" | sed -e 's|=|%|g' | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS='%..' | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
+        subject="$( echo "$subject" | sed -e 's|=|%|g' | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS='%..' 2>/dev/null | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
         if [[ -z "$subject" ]] ; then
             # just use the original subject if failed to convert:
             subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
