@@ -166,7 +166,7 @@ main(){
             source "./elive-functions"
         else
             # download functions
-            if wget "https://raw.githubusercontent.com/Elive/elive-tools/master/usr/lib/elive-tools/functions" -o elive-functions ; then
+            if wget "https://raw.githubusercontent.com/Elive/elive-tools/master/usr/lib/elive-tools/functions" -O elive-functions ; then
                 source "./elive-functions"
             else
                 echo -e "E: You must have elive functions available to use this tool, a copy of the '/usr/lib/elive-tools/functions' file in the same place of this tool called 'elive-functions'. Aborting..."
