@@ -78,11 +78,11 @@ notify_sender(){
         case "$status" in
             undelivered)
                 subject="${subject_prepend_undelivery} (${subject})"
-                el_error "undelivered email by '$to' with subject '$subject' ($file)"
+                el_warning "NOTIFYING '$to': undelivered email with subject '$subject' ($file)"
                 ;;
             queued)
                 subject="${subject_prepend_queued} (${subject})"
-                el_warning "queued email by '$to' with subject '$subject' ($file)"
+                el_warning "NOTIFYING '$to': queued email with subject '$subject' ($file)"
                 ;;
         esac
 
