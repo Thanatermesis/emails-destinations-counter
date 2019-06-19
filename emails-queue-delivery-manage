@@ -13,6 +13,10 @@ queue_dir="/etc/haraka/queue"
 # subjects to replace for the sending notifications:
 subject_prepend_undelivery="UNDELIVERED ->"
 subject_prepend_queued="NOTIFICATION: Your email has not been delivered yet ->"
+# time max allowed to consider an email "queued" - 14400 seconds = 4 hours
+seconds_max_queued="14400"
+# time max allowed to consider an email "undeliverable" - 345600 seconds = 4 hours
+seconds_max_undelivered="345600"
 #################################################
 
 # Lock system {{{
@@ -235,12 +239,12 @@ main(){
         timestamp_now="$(date +%s)"
 
         # check if more than 4 days passed
-        if [[ "$timestamp" -lt "$(( $timestamp_now - 345600 ))" ]] ; then
+        if [[ "$timestamp" -lt "$(( $timestamp_now - $seconds_max_undelivered ))" ]] ; then
             #echo "YES + 4 days : $queued"
             notify_sender "undelivered" "$from" "$subject" "$queued"
         else
             # check if more than 4 hours passed
-            if [[ "$timestamp" -lt "$(( $timestamp_now - 14400 ))" ]] ; then
+            if [[ "$timestamp" -lt "$(( $timestamp_now - $seconds_max_queued ))" ]] ; then
                 #echo "YES + 4 hours : $queued"
                 notify_sender "queued" "$from" "$subject" "$queued"
             #else
