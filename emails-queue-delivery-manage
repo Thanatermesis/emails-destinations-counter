@@ -88,6 +88,9 @@ notify_sender(){
                 subject="${subject_prepend_queued} (${subject})"
                 el_warning "NOTIFYING '$to': queued email with subject '$subject' ($file)"
                 ;;
+            invalid)
+                el_warning "INVALID email sent to revision by admin '$email_administrator'"
+                ;;
         esac
 
         # prepare email to send
