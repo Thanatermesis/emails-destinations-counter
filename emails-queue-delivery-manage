@@ -110,7 +110,7 @@ notify_sender(){
 
         # send
         if [[ "$mode_do_not_send" = "yes" ]] ; then
-            el_info "dry-run mode for:  /usr/sbin/sendmail -i -- '$to' < '$contents' ; rm -f '$contents'"
+            el_warning "DUMMY MODE for:  /usr/sbin/sendmail -i -- '$to' < '$contents' ; rm -f '$contents'"
         else
             /usr/sbin/sendmail -i -- "$to" < "$contents"
         fi
