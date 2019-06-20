@@ -5,6 +5,8 @@
 
 # Tests mode: change to yes to run it in tests mode (sending emails to tests_email_receiver instead of the original from: value)
 mode_tests="yes"
+# enable this variable if you want the tool normally work but without sending any real email
+#mode_do_not_send="yes"
 # where to send all the emails when we are in mode tests:
 tests_email_receiver=""
 # use this email to receive administrator notifications (debug, alerts, etc)
@@ -94,6 +96,8 @@ notify_sender(){
         esac
 
         # prepare email to send
+        rm -f "$contents"
+
         cat "$file" | tr -d '\r' | sed '1d' > "$contents"
         sed -i "s|^Subject:.*|Subject: ${subject}|g" "$contents"
         sed -i "s|^subject:.*|subject: ${subject}|g" "$contents"
@@ -105,8 +109,11 @@ notify_sender(){
         fi
 
         # send
-        /usr/sbin/sendmail -i -- "$to" < "$contents"
-        rm -f "$contents"
+        if [[ "$mode_do_not_send" = "yes" ]] ; then
+            el_info "dry-run mode for:  /usr/sbin/sendmail -i -- '$to' < '$contents' ; rm -f '$contents'"
+        else
+            /usr/sbin/sendmail -i -- "$to" < "$contents"
+        fi
 
         # save controls
         notify_database "save" "$status" "$file"
