@@ -156,7 +156,7 @@ main(){
     # sourced? never!
     case $- in
         *i*)
-            echo -e "E: you are sourcing the code of the tool instead of running the tool"
+            echo -e "E: You are sourcing the code of the tool instead of running the tool. Doing that is dangerous, so let's just abort instead... "
             exit 1
             ;;
     esac
