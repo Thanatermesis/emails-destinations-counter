@@ -72,6 +72,8 @@ notify_sender(){
 
     contents="${tool_dir}/tmp_contents_email"
 
+    [[ -s "$file" ]] || return
+
     # }}}
 
     if notify_database "check" "$status" "$file" ; then
