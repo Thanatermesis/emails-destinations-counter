@@ -153,6 +153,14 @@ notify_database(){
 
 main(){
     # pre {{{
+    # sourced? never!
+    case $- in
+        *i*)
+            echo -e "E: you are sourcing the code of the tool instead of running the tool"
+            exit 1
+            ;;
+    esac
+
     export NOREPORTS=1
     [[ -z $HOME ]] && export HOME="/home/$(id -un)"
     [[ -z $USER ]] && export USER="$(id -un)"
