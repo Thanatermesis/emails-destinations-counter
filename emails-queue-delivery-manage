@@ -7,6 +7,8 @@
 mode_tests="yes"
 # where to send all the emails when we are in mode tests:
 tests_email_receiver=""
+# use this email to receive administrator notifications (debug, alerts, etc)
+email_administrator=""
 
 # directory where are the queued emails
 queue_dir="/etc/haraka/queue"
@@ -207,6 +209,10 @@ main(){
         from="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(from):" | grep -viE "(from): <>" | sed -e 's|^from:||g' -e 's|^From:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
         if [[ "$( echo "$from" | wc -l )" -gt 1 ]] ; then
             el_warning "the queued file '$queued' contains multiple 'From:' entries, please inspect it to know how it should be dealt. Ignoring it..."
+            if [[ -n "$email_administrator" ]] ; then
+                notify_sender "invalid" "$tests_email_receiver" "INVALID email, includes multiple FROM entries, how it should be dealt? '$queued' " "$queued"
+            fi
+
             continue
         fi
 
@@ -222,8 +228,11 @@ main(){
             subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
         fi
 
-        if [[ "$( echo "$from" | wc -l )" -gt 1 ]] ; then
+        if [[ "$( echo "$subject" | wc -l )" -gt 1 ]] ; then
             el_warning "the queued file '$queued' contains multiple 'Subject:' entries, please inspect it to know how it should be dealt. Ignoring it..."
+            if [[ -n "$email_administrator" ]] ; then
+                notify_sender "invalid" "$tests_email_receiver" "INVALID email, includes multiple SUBJECT entries, how it should be dealt? '$queued' " "$queued"
+            fi
             continue
         fi
 
