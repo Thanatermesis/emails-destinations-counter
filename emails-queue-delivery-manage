@@ -202,9 +202,18 @@ main(){
     fi
     export NOREPORTS=1
 
-    if [[ "$mode_tests" = "yes" ]] && [[ -z "$tests_email_receiver" ]] ; then
-        el_error "you are in 'mode_tests', you need to set the variable 'tests_email_receiver' to an email where to receive the testing results"
-        exit 1
+    if [[ "$mode_tests" = "yes" ]] ; then
+        if [[ -z "$tests_email_receiver" ]] || [[ -z "$email_administrator" ]] ; then
+            el_error "you are in 'mode_tests', you need to set the variable 'tests_email_receiver' and 'email_administrator' first"
+            exit 1
+        fi
+    fi
+
+    # checks
+    # awk version
+    #awk_version="$( awk --version | head -1 | sed -e 's|API.*||g' | tr ' ' '\n' | grep "[[:digit:]]" | tr ',' ' ' )"
+    if python -c "import sys, urllib as ul" 2>/dev/null ; then
+        is_python=1
     fi
 
     echo -e "Starting $(basename $0):"
@@ -242,7 +251,11 @@ main(){
         # awk version (damn you CENTOS! you are uselessly old)
         #subject="$( echo "$subject" | sed -e 's|=|%|g' | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS='%..' 2>/dev/null | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
         # python version
-        subject="$( echo "$subject" | sed -e 's|=|%|g' | python -c "import sys, urllib as ul; print ul.unquote(sys.stdin.read());" 2>/dev/null | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
+        if ((is_python)) ; then
+            subject="$( echo "$subject" | sed -e 's|=|%|g' | python -c "import sys, urllib as ul; print ul.unquote(sys.stdin.read());" 2>/dev/null | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
+        else
+            subject="$( echo "$subject" | sed -e 's|=|%|g' | awk -niord '{printf RT?$0chr("0x"substr(RT,2)):$0}' RS='%..' 2>/dev/null | sed -e 's|^.*?Q?||g' -e 's|?%$||g' )"
+        fi
         if [[ -z "$subject" ]] ; then
             # just use the original subject if failed to convert:
             subject="$( head -n 200 "$queued" | tr -d '\r' | grep -aiE "^(subject):" | grep -viE "(subject): <>$" | sed -e 's|^subject:||g' -e 's|^Subject:||g' -e 's|&lt;||g' -e 's|&gt;||g' -e 's|^ ||' -e 's|>.*$||g' -e 's|^.*<||g' )"
