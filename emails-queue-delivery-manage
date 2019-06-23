@@ -287,6 +287,9 @@ main(){
         if [[ "$timestamp" -lt "$(( $timestamp_now - $seconds_max_undelivered ))" ]] ; then
             #echo "YES + 4 days : $queued"
             notify_sender "undelivered" "$from" "$subject" "$queued"
+
+            el_info "deleting undelivered email $queued"
+            rm -f "$queued"
         else
             # check if more than 4 hours passed
             if [[ "$timestamp" -lt "$(( $timestamp_now - $seconds_max_queued ))" ]] ; then
